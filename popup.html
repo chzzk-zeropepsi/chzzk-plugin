@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px -apple-system, sans-serif; margin: 0; padding: 12px; width: 360px; background: #1e1e24; color: #eee; }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+    .tab { flex: 1; padding: 6px; text-align: center; background: #2a2a32; border-radius: 4px; cursor: pointer; font-size: 11px; }
+    .tab.active { background: #1AE192; color: #111; font-weight: 600; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .empty { padding: 14px; text-align: center; color: #777; font-size: 11px; }
+    button { background: #1AE192; color: #111; border: none; border-radius: 4px; padding: 5px 8px; font-size: 11px; cursor: pointer; font-weight: 600; }
+    button.secondary { background: transparent; border: 1px solid #555; color: #ccc; }
+    input { background: #2a2a32; border: 1px solid #444; color: #eee; border-radius: 4px; padding: 5px 7px; font-size: 11px; box-sizing: border-box; }
+    .group-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #2a2a32; border-radius: 4px; margin-bottom: 6px; }
+    .group-row .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+    .group-row .name { flex: 1; font-weight: 600; }
+    .group-row .count { font-size: 10px; color: #888; }
+    .group-detail { padding: 8px; background: #25252b; border-radius: 4px; margin-bottom: 8px; }
+    .group-detail h3 { font-size: 12px; margin: 0 0 6px; color: #1AE192; display: flex; align-items: center; gap: 6px; }
+    .ch-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; background: #2a2a32; border-radius: 12px; font-size: 10px; margin: 2px; }
+    .ch-pill img { width: 16px; height: 16px; border-radius: 50%; }
+    .ch-pill button { padding: 0 4px; background: transparent; color: #888; font-size: 10px; }
+    .ch-picker { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow-y: auto; border: 1px solid #333; border-radius: 4px; padding: 4px; }
+    .ch-pick-row { display: flex; align-items: center; gap: 6px; padding: 4px; cursor: pointer; border-radius: 3px; font-size: 11px; }
+    .ch-pick-row:hover { background: #2a2a32; }
+    .ch-pick-row img { width: 20px; height: 20px; border-radius: 50%; }
+    .ch-pick-row .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #e04545; flex-shrink: 0; }
+    .row { display: flex; gap: 6px; margin-top: 8px; }
+    .row > * { flex: 1; }
+    .err { color: #e74c3c; font-size: 11px; margin-top: 4px; }
+    .bm-entry { background: #25252b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+    .bm-head { display: flex; gap: 6px; align-items: flex-start; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #333; }
+    .bm-head-main { flex: 1; min-width: 0; }
+    .bm-channel { font-weight: 700; color: #1AE192; font-size: 12px; }
+    .bm-title { font-size: 11px; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bm-date { font-size: 10px; color: #777; margin-top: 2px; }
+    .bm-del-all { font-size: 10px; padding: 3px 6px; }
+    .bm-items { display: flex; flex-direction: column; gap: 3px; }
+    .bm-item { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 3px; }
+    .bm-item:hover { background: #2a2a32; }
+    .bm-time { font-family: monospace; font-size: 11px; color: #e0a93b; flex-shrink: 0; min-width: 50px; }
+    .bm-label { flex: 1; font-size: 11px; color: #eee; outline: none; padding: 1px 3px; border-radius: 2px; min-height: 14px; }
+    .bm-label:focus { background: #1a1a20; }
+    .bm-del { background: transparent; border: none; color: #888; padding: 0 6px; font-size: 14px; cursor: pointer; }
+    .bm-del:hover { color: #e04545; }
+  </style>
+</head>
+<body>
+  <h1>치지직 플러그인</h1>
+  <div class="tabs">
+    <div class="tab active" data-tab="groups">그룹</div>
+    <div class="tab" data-tab="notify">알림</div>
+    <div class="tab" data-tab="bookmarks">북마크</div>
+  </div>
+
+  <div class="panel active" data-panel="groups">
+    <div id="groupsList"></div>
+    <div class="row">
+      <input id="newGroupName" placeholder="새 그룹 이름">
+      <input id="newGroupColor" type="color" value="#1AE192" style="padding: 2px; width: 40px; flex: 0 0 40px;">
+      <button id="addGroupBtn" style="flex: 0 0 auto;">+ 추가</button>
+    </div>
+    <div class="err" id="groupsErr" hidden></div>
+  </div>
+
+  <div class="panel" data-panel="notify">
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      <input id="notifySearch" placeholder="채널 검색" style="flex:1;">
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#888;cursor:pointer;">
+        <input type="checkbox" id="notifyOnlySelected" style="width:auto;"> 등록만
+      </label>
+    </div>
+    <div id="notifyList" class="ch-picker" style="max-height:340px;"></div>
+    <div class="err" id="notifyErr" hidden></div>
+  </div>
+  <div class="panel" data-panel="bookmarks">
+    <div id="bookmarkList"></div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
