@@ -1,5 +1,5 @@
 // CHZZK Companion - storage helpers (groups)
-// 그룹 스키마: { id, name, color, channelIds: [], order: number }
+// 그룹 스키마: { id, name, color, channelIds: [], order: number, parentId: string|null }
 // 저장 위치: chrome.storage.local 키 "groups" → Group[]
 
 const GROUPS_KEY = 'groups';
@@ -24,7 +24,13 @@ export async function upsertGroup(group) {
 }
 
 export async function deleteGroup(id) {
-  const groups = (await readGroups()).filter((g) => g.id !== id);
+  const all = await readGroups();
+  const target = all.find((g) => g.id === id);
+  // 자식 그룹은 삭제할 그룹의 부모(없으면 null=루트)로 reparent
+  const newParent = target?.parentId ?? null;
+  const groups = all
+    .filter((g) => g.id !== id)
+    .map((g) => g.parentId === id ? { ...g, parentId: newParent } : g);
   await writeGroups(groups);
   return groups;
 }

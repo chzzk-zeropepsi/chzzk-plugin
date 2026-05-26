@@ -3,13 +3,21 @@
 
 const BASE = 'https://api.chzzk.naver.com';
 
+function bgFetchJson(url) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: 'cc-fetch-json', url }, (res) => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+      if (res?.error) return reject(new Error(res.error));
+      resolve(res?.data);
+    });
+  });
+}
+
 export async function fetchFollowings({ size = 100, maxPages = 20 } = {}) {
   const all = [];
   for (let page = 0; page < maxPages; page++) {
     const url = `${BASE}/service/v1/channels/followings?page=${page}&size=${size}&sortType=FOLLOW`;
-    const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
-    if (!res.ok) throw new Error(`followings ${res.status}`);
-    const j = await res.json();
+    const j = await bgFetchJson(url);
     const content = j?.content ?? {};
     const list = content.followingList ?? content.data ?? content.list ?? [];
     if (!list.length) break;

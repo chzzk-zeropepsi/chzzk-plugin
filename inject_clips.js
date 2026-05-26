@@ -6,6 +6,8 @@
   const LIST_RE = /api\.chzzk\.naver\.com\/service\/v[12]\/channels\/[a-zA-Z0-9]+\/clips/;
   const VIDEO_LIST_RE = /api\.chzzk\.naver\.com\/service\/v[12]\/channels\/[a-zA-Z0-9]+\/videos/;
   const VIDEO_DETAIL_RE = /api\.chzzk\.naver\.com\/service\/v[23]\/videos\/[0-9]+/;
+  const LIVES_RE = /api\.chzzk\.naver\.com\/service\/v[12]\/lives/;
+  const FOLLOWING_LIVES_RE = /api\.chzzk\.naver\.com\/service\/v[12]\/channels\/following-lives/;
 
   const send = (data) => {
     try { window.postMessage({ source: 'cc-clip-list', data }, '*'); } catch (_) {}
@@ -35,6 +37,26 @@
         thumbnailImageUrl: c.thumbnailImageUrl,
         channelName: c.channel?.channelName,
       } }, '*'); } catch (_) {}
+    } else if (LIVES_RE.test(url)) {
+      const data = j?.content?.data || [];
+      if (!data.length) return;
+      try { window.postMessage({ source: 'cc-lives', data: data.map((l) => ({
+        channelId: l.channel?.channelId,
+        watchPartyNo: l.watchPartyNo,
+        watchPartyTag: l.watchPartyTag,
+        watchPartyType: l.watchPartyType,
+        dropsCampaignNo: l.dropsCampaignNo,
+      })).filter((x) => x.channelId) }, '*'); } catch (_) {}
+    } else if (FOLLOWING_LIVES_RE.test(url)) {
+      const list = j?.content?.followingList || [];
+      if (!list.length) return;
+      try { window.postMessage({ source: 'cc-lives', data: list.map((it) => ({
+        channelId: it.channelId || it.channel?.channelId,
+        watchPartyNo: it.liveInfo?.watchPartyNo,
+        watchPartyTag: it.liveInfo?.watchPartyTag,
+        watchPartyType: it.liveInfo?.watchPartyType,
+        dropsCampaignNo: it.liveInfo?.dropsCampaignNo,
+      })).filter((x) => x.channelId) }, '*'); } catch (_) {}
     }
   };
 
@@ -44,7 +66,7 @@
     const res = await origFetch(...args);
     try {
       const url = (typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url)) || '';
-      if (LIST_RE.test(url) || VIDEO_LIST_RE.test(url) || VIDEO_DETAIL_RE.test(url)) {
+      if (LIST_RE.test(url) || VIDEO_LIST_RE.test(url) || VIDEO_DETAIL_RE.test(url) || LIVES_RE.test(url) || FOLLOWING_LIVES_RE.test(url)) {
         res.clone().json().then((j) => handlePayload(j, url)).catch(() => {});
       }
     } catch (_) {}
@@ -60,7 +82,7 @@
     return OrigOpen.call(this, method, url, ...rest);
   };
   OrigXHR.prototype.send = function (...args) {
-    if (this.__ccUrl && (LIST_RE.test(this.__ccUrl) || VIDEO_LIST_RE.test(this.__ccUrl) || VIDEO_DETAIL_RE.test(this.__ccUrl))) {
+    if (this.__ccUrl && (LIST_RE.test(this.__ccUrl) || VIDEO_LIST_RE.test(this.__ccUrl) || VIDEO_DETAIL_RE.test(this.__ccUrl) || LIVES_RE.test(this.__ccUrl) || FOLLOWING_LIVES_RE.test(this.__ccUrl))) {
       this.addEventListener('load', () => {
         try {
           const j = JSON.parse(this.responseText);

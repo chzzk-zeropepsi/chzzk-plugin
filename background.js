@@ -21,6 +21,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'pollNow') { pollLiveTransitions().then(() => sendResponse({ ok: true })); return true; }
   if (msg?.type === 'seedState') { seedChannelState(msg.channelId).then((r) => sendResponse(r)); return true; }
   if (msg?.type === 'clearState') { clearChannelState(msg.channelId).then(() => sendResponse({ ok: true })); return true; }
+  if (msg?.type === 'cc-fetch-json') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://chzzk.naver.com/*' });
+      if (!tabs.length) { sendResponse({ error: '치지직 탭을 먼저 열어주세요' }); return; }
+      const tab = tabs[0];
+      try {
+        const res = await chrome.tabs.sendMessage(tab.id, { type: 'cc-fetch-json-proxy', url: msg.url });
+        sendResponse(res);
+      } catch (e) {
+        sendResponse({ error: String(e.message ?? e) });
+      }
+    })();
+    return true;
+  }
   if (msg?.type === 'cc-download') {
     chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: false })
       .then((id) => sendResponse({ ok: true, id }))

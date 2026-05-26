@@ -93,20 +93,30 @@ function render() {
   if (!groups.length) {
     root.innerHTML = '<div class="empty">아직 그룹이 없습니다. 아래에서 추가하세요.</div>';
   }
+  const childrenMap = new Map();
   for (const g of groups) {
+    const p = g.parentId || null;
+    if (!childrenMap.has(p)) childrenMap.set(p, []);
+    childrenMap.get(p).push(g);
+  }
+  function renderNode(g, depth) {
     const row = document.createElement('div');
     row.className = 'group-row';
+    row.style.marginLeft = (depth * 14) + 'px';
     row.innerHTML = `
       <span class="swatch" style="background:${g.color || '#1AE192'}"></span>
       <span class="name">${escapeHtml(g.name)}</span>
       <span class="count">${(g.channelIds || []).length}개</span>
       <button class="secondary" data-act="rename" data-id="${g.id}">이름</button>
+      <button class="secondary" data-act="add-child" data-id="${g.id}" title="하위 그룹 추가">+ 하위</button>
       <button class="secondary" data-act="toggle" data-id="${g.id}">${expandedGroupId === g.id ? '닫기' : '편집'}</button>
       <button class="secondary" data-act="delete" data-id="${g.id}">삭제</button>
     `;
     root.appendChild(row);
     if (expandedGroupId === g.id) root.appendChild(renderGroupDetail(g));
+    for (const child of (childrenMap.get(g.id) || [])) renderNode(child, depth + 1);
   }
+  for (const g of (childrenMap.get(null) || [])) renderNode(g, 0);
 }
 
 function renderGroupDetail(g) {
@@ -181,6 +191,11 @@ $('groupsList').addEventListener('click', async (e) => {
     if (!name) return;
     groups = await upsertGroup({ ...g, name: name.trim() });
     render();
+  } else if (act === 'add-child') {
+    const name = prompt('하위 그룹 이름:');
+    if (!name?.trim()) return;
+    groups = await upsertGroup({ id: newGroupId(), name: name.trim(), color: '#1AE192', parentId: id });
+    render();
   } else if (act === 'toggle') {
     expandedGroupId = expandedGroupId === id ? null : id;
     render();
@@ -197,7 +212,7 @@ $('addGroupBtn').addEventListener('click', async () => {
   const name = $('newGroupName').value.trim();
   if (!name) return;
   const color = $('newGroupColor').value || '#1AE192';
-  groups = await upsertGroup({ id: newGroupId(), name, color });
+  groups = await upsertGroup({ id: newGroupId(), name, color, parentId: null });
   $('newGroupName').value = '';
   render();
 });

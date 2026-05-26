@@ -3,6 +3,10 @@
 
 const GROUPS_KEY = 'groups';
 const NOTIFY_KEY = 'notify_channels';
+const FAV_KEY = 'favorite_channels';
+const FAV_ONLY_KEY = 'cc_fav_only';
+let favoriteChannels = new Set();
+let favOnly = false;
 const POS_KEY = 'cc_panel_pos';
 const SIZE_KEY = 'cc_panel_size';
 const PIN_KEY = 'cc_panel_pinned';
@@ -11,11 +15,38 @@ const COLLAPSED_KEY = 'cc_collapsed_groups';
 let notifyChannels = new Set();
 const OTHER_KEY = '__other__';
 const VIEW_KEY = 'cc_view_mode';
+const LIVE_ONLY_KEY = 'cc_live_only';
+let liveOnly = false;
 const collapsedGroups = new Set();
 let viewMode = 'custom';
 let searchQuery = '';
 let cachedFollowings = [];
 let cachedGroups = [];
+const watchParties = new Map(); // channelId -> { no, tag, type, drops }
+let addingTo = null; // null | 'root' | groupId
+
+window.addEventListener('message', (e) => {
+  if (e.source !== window) return;
+  if (e.data?.source !== 'cc-lives') return;
+  let changed = false;
+  for (const it of (e.data.data || [])) {
+    if (!it.channelId) continue;
+    const hasInfo = it.watchPartyNo || it.dropsCampaignNo;
+    if (hasInfo) {
+      watchParties.set(it.channelId, {
+        no: it.watchPartyNo || null,
+        tag: it.watchPartyTag || '',
+        type: it.watchPartyType || '',
+        drops: it.dropsCampaignNo || null,
+      });
+      changed = true;
+    } else if (watchParties.has(it.channelId)) {
+      watchParties.delete(it.channelId);
+      changed = true;
+    }
+  }
+  if (changed && cachedFollowings.length) renderBody();
+});
 const OFFLINE_KEY = '__offline__';
 
 async function isLoggedIn() {
@@ -63,6 +94,8 @@ async function fetchFollowings({ size = 100, maxPages = 20 } = {}) {
   }).filter((x) => x.channelId && !seen.has(x.channelId) && (seen.add(x.channelId), true));
 }
 
+function newGroupId() { return 'g_' + Math.random().toString(36).slice(2, 10); }
+
 async function readGroups() {
   const obj = await chrome.storage.local.get(GROUPS_KEY);
   const list = Array.isArray(obj[GROUPS_KEY]) ? obj[GROUPS_KEY] : [];
@@ -88,14 +121,23 @@ function ensurePanel() {
   panelEl.id = 'cc-followings-panel';
   panelEl.innerHTML = `
     <div class="cc-fp-header">
-      <span>팔로잉</span>
+      <div class="cc-fp-row1">
+        <span>팔로잉</span>
+        <button class="cc-fp-pin" type="button" title="위치 고정">📌</button>
+        <button class="cc-fp-refresh" type="button" title="새로고침">↻</button>
+        <button class="cc-fp-toggle" type="button" title="접기">−</button>
+      </div>
       <div class="cc-fp-tabs">
         <button class="cc-fp-tab" data-view="custom" type="button">내 그룹</button>
         <button class="cc-fp-tab" data-view="bygame" type="button">게임별</button>
+        <button class="cc-fp-tab" data-view="watchparty" type="button" title="같이보기">🎬</button>
+        <button class="cc-fp-tab" data-view="drops" type="button" title="드롭스">🎁</button>
       </div>
-      <button class="cc-fp-pin" type="button" title="위치 고정">📌</button>
-      <button class="cc-fp-refresh" type="button" title="새로고침">↻</button>
-      <button class="cc-fp-toggle" type="button" title="접기">−</button>
+      <div class="cc-fp-row2">
+        <button class="cc-fp-live-only" type="button" title="라이브만 보기">🔴 LIVE만</button>
+        <button class="cc-fp-fav-only" type="button" title="즐겨찾기만 보기">⚡만</button>
+        <button class="cc-fp-add-group" type="button" title="새 최상위 그룹">+ 그룹</button>
+      </div>
     </div>
     <div class="cc-fp-search-row">
       <input class="cc-fp-search" type="text" placeholder="채널 검색…">
@@ -104,6 +146,25 @@ function ensurePanel() {
   `;
   document.body.appendChild(panelEl);
   applyPin();
+  applyLiveOnly();
+  applyFavOnly();
+  panelEl.querySelector('.cc-fp-add-group').addEventListener('click', () => {
+    addingTo = 'root';
+    renderBody();
+    setTimeout(() => panelEl.querySelector('.cc-group-add-input input')?.focus(), 0);
+  });
+  panelEl.querySelector('.cc-fp-live-only').addEventListener('click', () => {
+    liveOnly = !liveOnly;
+    chrome.storage.local.set({ [LIVE_ONLY_KEY]: liveOnly });
+    applyLiveOnly();
+    renderBody();
+  });
+  panelEl.querySelector('.cc-fp-fav-only').addEventListener('click', () => {
+    favOnly = !favOnly;
+    chrome.storage.local.set({ [FAV_ONLY_KEY]: favOnly });
+    applyFavOnly();
+    renderBody();
+  });
   panelEl.querySelector('.cc-fp-pin').addEventListener('click', () => {
     panelPinned = !panelPinned;
     chrome.storage.local.set({ [PIN_KEY]: panelPinned });
@@ -124,6 +185,23 @@ function ensurePanel() {
   bindViewTabs(panelEl);
   bindSearch(panelEl);
   return panelEl;
+}
+
+function applyLiveOnly() {
+  if (!panelEl) return;
+  const btn = panelEl.querySelector('.cc-fp-live-only');
+  if (!btn) return;
+  btn.classList.toggle('cc-active', liveOnly);
+  btn.textContent = liveOnly ? '🔴 LIVE만' : '전체';
+  btn.title = liveOnly ? '전체 보기로 전환' : '라이브만 보기';
+}
+
+function applyFavOnly() {
+  if (!panelEl) return;
+  const btn = panelEl.querySelector('.cc-fp-fav-only');
+  if (!btn) return;
+  btn.classList.toggle('cc-active', favOnly);
+  btn.title = favOnly ? '전체 보기로 전환' : '즐겨찾기만 보기';
 }
 
 function applyPin() {
@@ -165,47 +243,116 @@ function bindChannelDnD(panel) {
   const body = panel.querySelector('.cc-fp-body');
   body.addEventListener('dragstart', (e) => {
     const row = e.target.closest('.cc-ch-row');
-    if (!row) return;
-    e.dataTransfer.clearData();
-    e.dataTransfer.setData('text/cc-channel', JSON.stringify({ cid: row.dataset.cid, fromGid: row.dataset.fromGid }));
-    e.dataTransfer.effectAllowed = 'move';
-    row.classList.add('cc-dragging');
+    if (row) {
+      e.dataTransfer.clearData();
+      e.dataTransfer.setData('text/cc-channel', JSON.stringify({ cid: row.dataset.cid, fromGid: row.dataset.fromGid }));
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('cc-dragging');
+      return;
+    }
+    const head = e.target.closest('.cc-group-head');
+    if (head) {
+      const groupEl = head.closest('.cc-group');
+      const gid = groupEl?.dataset.gid;
+      if (!gid || gid === OTHER_KEY) return;
+      e.dataTransfer.clearData();
+      e.dataTransfer.setData('text/cc-group', JSON.stringify({ gid }));
+      e.dataTransfer.effectAllowed = 'move';
+      groupEl.classList.add('cc-dragging');
+    }
   });
   body.addEventListener('dragend', (e) => {
-    const row = e.target.closest('.cc-ch-row');
-    if (row) row.classList.remove('cc-dragging');
+    body.querySelectorAll('.cc-dragging').forEach((el) => el.classList.remove('cc-dragging'));
     body.querySelectorAll('.cc-drop-target').forEach((el) => el.classList.remove('cc-drop-target'));
   });
+  function clearDropIndicators() {
+    body.querySelectorAll('.cc-drop-target,.cc-drop-above,.cc-drop-below').forEach((el) => el.classList.remove('cc-drop-target', 'cc-drop-above', 'cc-drop-below'));
+  }
+  function isGroupDrag(dt) {
+    try { return dt.types && [...dt.types].includes('text/cc-group'); } catch (_) { return false; }
+  }
   body.addEventListener('dragover', (e) => {
     const groupEl = e.target.closest('.cc-group[data-drop]');
     if (!groupEl) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    body.querySelectorAll('.cc-drop-target').forEach((el) => el !== groupEl && el.classList.remove('cc-drop-target'));
-    groupEl.classList.add('cc-drop-target');
+    clearDropIndicators();
+    if (isGroupDrag(e.dataTransfer) && groupEl.dataset.gid !== OTHER_KEY) {
+      const head = groupEl.querySelector('.cc-group-head');
+      const rect = head.getBoundingClientRect();
+      const ratio = (e.clientY - rect.top) / rect.height;
+      if (ratio < 0.3) groupEl.classList.add('cc-drop-above');
+      else if (ratio > 0.7) groupEl.classList.add('cc-drop-below');
+      else groupEl.classList.add('cc-drop-target');
+    } else {
+      groupEl.classList.add('cc-drop-target');
+    }
   });
   body.addEventListener('dragleave', (e) => {
     const groupEl = e.target.closest('.cc-group[data-drop]');
-    if (groupEl && !groupEl.contains(e.relatedTarget)) groupEl.classList.remove('cc-drop-target');
+    if (groupEl && !groupEl.contains(e.relatedTarget)) groupEl.classList.remove('cc-drop-target', 'cc-drop-above', 'cc-drop-below');
   });
   body.addEventListener('drop', async (e) => {
-    const groupEl = e.target.closest('.cc-group[data-drop]');
-    if (!groupEl) return;
     e.preventDefault();
-    groupEl.classList.remove('cc-drop-target');
-    const data = e.dataTransfer.getData('text/cc-channel');
-    if (!data) return;
-    const { cid, fromGid } = JSON.parse(data);
-    const toGid = groupEl.dataset.gid;
-    if (fromGid === toGid) return;
-    const groups = await readGroups();
-    for (const g of groups) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
-    if (toGid !== OTHER_KEY) {
-      const target = groups.find((g) => g.id === toGid);
-      if (target) target.channelIds.push(cid);
+    body.querySelectorAll('.cc-drop-target').forEach((el) => el.classList.remove('cc-drop-target'));
+    const groupEl = e.target.closest('.cc-group[data-drop]');
+    const chData = e.dataTransfer.getData('text/cc-channel');
+    const grpData = e.dataTransfer.getData('text/cc-group');
+    if (chData) {
+      if (!groupEl) return;
+      const { cid, fromGid } = JSON.parse(chData);
+      const toGid = groupEl.dataset.gid;
+      if (fromGid === toGid) return;
+      const groups = await readGroups();
+      for (const g of groups) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
+      if (toGid !== OTHER_KEY) {
+        const target = groups.find((g) => g.id === toGid);
+        if (target) target.channelIds.push(cid);
+      }
+      await chrome.storage.local.set({ [GROUPS_KEY]: groups });
+      refresh();
+      return;
     }
-    await chrome.storage.local.set({ [GROUPS_KEY]: groups });
-    refresh();
+    if (grpData) {
+      const { gid } = JSON.parse(grpData);
+      const toGid = groupEl ? groupEl.dataset.gid : null;
+      if (gid === toGid) return;
+      const wantAbove = groupEl?.classList.contains('cc-drop-above');
+      const wantBelow = groupEl?.classList.contains('cc-drop-below');
+      const groups = await readGroups();
+      const moving = groups.find((g) => g.id === gid);
+      if (!moving) return;
+      const descendants = new Set([gid]);
+      let added = true;
+      while (added) {
+        added = false;
+        for (const g of groups) {
+          if (g.parentId && descendants.has(g.parentId) && !descendants.has(g.id)) { descendants.add(g.id); added = true; }
+        }
+      }
+      if ((wantAbove || wantBelow) && toGid && toGid !== OTHER_KEY) {
+        // 형제로 재정렬
+        const target = groups.find((g) => g.id === toGid);
+        if (!target) return;
+        if (descendants.has(toGid)) return;
+        moving.parentId = target.parentId || null;
+        const siblings = groups.filter((g) => (g.parentId || null) === (target.parentId || null) && g.id !== gid);
+        const ti = siblings.findIndex((g) => g.id === toGid);
+        const insertAt = wantAbove ? ti : ti + 1;
+        siblings.splice(insertAt, 0, moving);
+        siblings.forEach((g, i) => { g.order = i; });
+      } else {
+        // 다른 그룹의 자식으로
+        const newParent = (!toGid || toGid === OTHER_KEY) ? null : toGid;
+        if (newParent && descendants.has(newParent)) return;
+        if ((moving.parentId || null) === newParent) return;
+        moving.parentId = newParent;
+        const siblings = groups.filter((g) => (g.parentId || null) === newParent);
+        siblings.forEach((g, i) => { g.order = i; });
+      }
+      await chrome.storage.local.set({ [GROUPS_KEY]: groups });
+      refresh();
+    }
   });
 }
 
@@ -239,7 +386,7 @@ async function restoreSize(panel) {
   const { [SIZE_KEY]: size } = await chrome.storage.local.get(SIZE_KEY);
   if (!size) return;
   const w = parseInt(size.width), h = parseInt(size.height);
-  if (Number.isFinite(w) && w >= 360) panel.style.width = w + 'px';
+  if (Number.isFinite(w) && w >= 220) panel.style.width = w + 'px';
   if (Number.isFinite(h) && h >= 200) panel.style.height = h + 'px';
 }
 
@@ -267,23 +414,33 @@ async function restorePos(panel) {
 
 function channelLink(c, gid) {
   const liveCountText = c.openLive && c.concurrentUserCount ? formatViewers(c.concurrentUserCount) : '';
-  const live = c.openLive ? `<span class="cc-live-dot" title="LIVE"></span>${liveCountText ? `<span class="cc-live-count">${escapeHtml(liveCountText)}</span>` : ''}` : '';
-  const removeBtn = gid && gid !== OTHER_KEY
-    ? `<button class="cc-ch-btn cc-ch-remove" data-act="remove-from-group" data-cid="${escapeHtml(c.channelId)}" data-gid="${escapeHtml(gid)}" title="이 그룹에서 제거">↩</button>`
-    : '';
+  const wp = c.openLive ? watchParties.get(c.channelId) : null;
+  const wpBadge = wp && wp.no ? `<span class="cc-wp-badge" title="같이보기${wp.tag ? ' · ' + wp.tag : ''}">🎬${wp.tag ? ' ' + escapeHtml(wp.tag) : ''}</span>` : '';
+  const dropsBadge = wp && wp.drops ? `<span class="cc-drops-badge" title="드롭스 캠페인">🎁</span>` : '';
   const tooltip = c.openLive && c.liveTitle ? `${c.liveTitle}\n— ${c.channelName}` : c.channelName;
   const isNotify = notifyChannels.has(c.channelId);
-  const notifyBtn = `<button class="cc-ch-btn cc-ch-notify ${isNotify ? 'cc-ch-notify-on' : ''}" data-act="notify-toggle" data-cid="${escapeHtml(c.channelId)}" title="${isNotify ? '알림 해제' : '방송 시작 알림 받기'}">${isNotify ? '🔔' : '🔕'}</button>`;
+  const isFav = favoriteChannels.has(c.channelId);
+  const indicators = `${isFav ? '<span class="cc-ch-ind cc-ch-ind-fav" title="즐겨찾기">⚡</span>' : ''}${isNotify ? '<span class="cc-ch-ind cc-ch-ind-notify" title="알림">🔔</span>' : ''}`;
+  const line2 = c.openLive ? `
+    <div class="cc-ch-line2">
+      <span class="cc-live-dot" title="LIVE"></span>
+      ${wpBadge}${dropsBadge}
+      <span class="cc-ch-title">${escapeHtml(c.liveTitle || '')}</span>
+    </div>
+  ` : '';
   return `
-    <div class="cc-ch-row ${c.openLive ? 'cc-live' : ''}" data-cid="${escapeHtml(c.channelId)}" data-from-gid="${escapeHtml(gid || '')}" draggable="true" title="${escapeHtml(tooltip)}">
+    <div class="cc-ch-row ${c.openLive ? 'cc-live' : ''}" data-cid="${escapeHtml(c.channelId)}" data-cname="${escapeHtml(c.channelName)}" data-from-gid="${escapeHtml(gid || '')}" draggable="true" title="${escapeHtml(tooltip)} · 우클릭: 메뉴">
       <a class="cc-ch-link" draggable="false" href="https://chzzk.naver.com/live/${encodeURIComponent(c.channelId)}">
         ${c.channelImageUrl ? `<img src="${escapeHtml(c.channelImageUrl)}" onerror="this.style.display='none'">` : '<span class="cc-ch-noimg"></span>'}
-        <span class="cc-ch-name">${escapeHtml(c.channelName)}</span>
-        ${live}
+        <div class="cc-ch-text">
+          <div class="cc-ch-line1">
+            <span class="cc-ch-name">${escapeHtml(c.channelName)}</span>
+            ${indicators}
+            ${liveCountText ? `<span class="cc-live-count">${escapeHtml(liveCountText)}</span>` : ''}
+          </div>
+          ${line2}
+        </div>
       </a>
-      ${notifyBtn}
-      ${removeBtn}
-      <button class="cc-ch-btn cc-ch-unfollow" data-act="unfollow" data-cid="${escapeHtml(c.channelId)}" data-cname="${escapeHtml(c.channelName)}" title="팔로우 취소">✕</button>
     </div>
   `;
 }
@@ -296,7 +453,7 @@ async function unfollowChannel(channelId) {
 }
 
 function renderByGame(followings) {
-  const sortByLiveThenName = (a, b) => (b.openLive ? 1 : 0) - (a.openLive ? 1 : 0) || (b.concurrentUserCount || 0) - (a.concurrentUserCount || 0) || a.channelName.localeCompare(b.channelName);
+  const sortByLiveThenName = (a, b) => (favoriteChannels.has(b.channelId) ? 1 : 0) - (favoriteChannels.has(a.channelId) ? 1 : 0) || (b.openLive ? 1 : 0) - (a.openLive ? 1 : 0) || (b.concurrentUserCount || 0) - (a.concurrentUserCount || 0) || a.channelName.localeCompare(b.channelName);
   const live = followings.filter((f) => f.openLive);
   const byCat = new Map();
   for (const f of live) {
@@ -328,36 +485,134 @@ function renderByGame(followings) {
   return sections.join('');
 }
 
+function renderAddInput(parentId) {
+  return `
+    <div class="cc-group-add-input" data-parent="${escapeHtml(parentId || '')}">
+      <input type="text" placeholder="그룹 이름..." maxlength="40">
+      <button type="button" data-act="add-confirm">확인</button>
+      <button type="button" data-act="add-cancel">취소</button>
+    </div>
+  `;
+}
+
+function renderWatchParty(followings) {
+  const sortByLiveThenName = (a, b) => (favoriteChannels.has(b.channelId) ? 1 : 0) - (favoriteChannels.has(a.channelId) ? 1 : 0) || (b.concurrentUserCount || 0) - (a.concurrentUserCount || 0) || a.channelName.localeCompare(b.channelName);
+  const live = followings.filter((f) => f.openLive && watchParties.get(f.channelId)?.no);
+  if (!live.length) return '<div class="cc-empty">진행 중인 같이보기 채널이 없습니다.</div>';
+  const byTag = new Map();
+  for (const f of live) {
+    const tag = watchParties.get(f.channelId)?.tag || '기타';
+    if (!byTag.has(tag)) byTag.set(tag, []);
+    byTag.get(tag).push(f);
+  }
+  const tags = [...byTag.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  const colorFor = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return `hsl(${h % 360}, 60%, 55%)`; };
+  return tags.map(([tag, list]) => {
+    const id = 'wp:' + tag;
+    const isCollapsed = collapsedGroups.has(id);
+    list.sort(sortByLiveThenName);
+    return `
+      <div class="cc-group ${isCollapsed ? 'cc-group-collapsed' : ''}" data-gid="${escapeHtml(id)}">
+        <div class="cc-group-head" style="--cc-c: ${colorFor(tag)}" data-act="toggle-group">
+          <span class="cc-caret">${isCollapsed ? '▶' : '▼'}</span>
+          <span class="cc-group-swatch"></span>
+          <span class="cc-group-name">🎬 ${escapeHtml(tag)}</span>
+          <span class="cc-group-count">${list.length}</span>
+        </div>
+        <div class="cc-group-body">${list.map((c) => channelLink(c, null)).join('')}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderDrops(followings) {
+  const sortByLiveThenName = (a, b) => (favoriteChannels.has(b.channelId) ? 1 : 0) - (favoriteChannels.has(a.channelId) ? 1 : 0) || (b.concurrentUserCount || 0) - (a.concurrentUserCount || 0) || a.channelName.localeCompare(b.channelName);
+  const live = followings.filter((f) => f.openLive && watchParties.get(f.channelId)?.drops);
+  if (!live.length) return '<div class="cc-empty">진행 중인 드롭스 캠페인이 없습니다.</div>';
+  live.sort(sortByLiveThenName);
+  return `<div class="cc-group" data-gid="drops:all">
+    <div class="cc-group-head" style="--cc-c: #5b6cff" data-act="toggle-group">
+      <span class="cc-caret">▼</span>
+      <span class="cc-group-swatch"></span>
+      <span class="cc-group-name">🎁 드롭스 진행 중</span>
+      <span class="cc-group-count">${live.length}</span>
+    </div>
+    <div class="cc-group-body">${live.map((c) => channelLink(c, null)).join('')}</div>
+  </div>`;
+}
+
 function renderGrouped(groups, followings) {
   const byId = new Map(followings.map((f) => [f.channelId, f]));
   const assigned = new Set();
   for (const g of groups) for (const id of g.channelIds || []) assigned.add(id);
 
-  const sortByLiveThenName = (a, b) => (b.openLive ? 1 : 0) - (a.openLive ? 1 : 0) || (b.concurrentUserCount || 0) - (a.concurrentUserCount || 0) || a.channelName.localeCompare(b.channelName);
+  const sortByLiveThenName = (a, b) => (favoriteChannels.has(b.channelId) ? 1 : 0) - (favoriteChannels.has(a.channelId) ? 1 : 0) || (b.openLive ? 1 : 0) - (a.openLive ? 1 : 0) || (b.concurrentUserCount || 0) - (a.concurrentUserCount || 0) || a.channelName.localeCompare(b.channelName);
 
-  const sectionHtml = (id, name, color, channels) => {
-    const liveCount = channels.filter((c) => c.openLive).length;
-    const isCollapsed = collapsedGroups.has(id);
+  // 트리 구성
+  const childrenMap = new Map(); // parentId -> Group[]
+  for (const g of groups) {
+    const p = g.parentId || null;
+    if (!childrenMap.has(p)) childrenMap.set(p, []);
+    childrenMap.get(p).push(g);
+  }
+
+  function descendantLiveCount(g) {
+    const own = (g.channelIds || []).map((id) => byId.get(id)).filter((c) => c && c.openLive).length;
+    const sub = (childrenMap.get(g.id) || []).reduce((s, c) => s + descendantLiveCount(c), 0);
+    return own + sub;
+  }
+  function descendantTotalCount(g) {
+    const own = (g.channelIds || []).filter((id) => byId.has(id)).length;
+    const sub = (childrenMap.get(g.id) || []).reduce((s, c) => s + descendantTotalCount(c), 0);
+    return own + sub;
+  }
+
+  function renderGroupNode(g, depth) {
+    const channels = (g.channelIds || []).map((id) => byId.get(id)).filter(Boolean).sort(sortByLiveThenName);
+    const children = (childrenMap.get(g.id) || []);
+    const isCollapsed = collapsedGroups.has(g.id);
+    const totalLive = descendantLiveCount(g);
+    const totalAll = descendantTotalCount(g);
+    const addForm = addingTo === g.id ? renderAddInput(g.id) : '';
+    const inner = isCollapsed ? '' : (
+      (channels.length ? channels.map((c) => channelLink(c, g.id)).join('') : (children.length || addForm ? '' : '<div class="cc-empty">채널 없음</div>'))
+      + children.map((c) => renderGroupNode(c, depth + 1)).join('')
+      + addForm
+    );
     return `
-      <div class="cc-group ${isCollapsed ? 'cc-group-collapsed' : ''}" data-gid="${escapeHtml(id)}" data-drop="1">
-        <div class="cc-group-head" style="--cc-c: ${escapeHtml(color)}" data-act="toggle-group">
+      <div class="cc-group ${isCollapsed ? 'cc-group-collapsed' : ''}" data-gid="${escapeHtml(g.id)}" data-drop="1" style="margin-left:${depth * 12}px">
+        <div class="cc-group-head" style="--cc-c: ${escapeHtml(g.color || '#1AE192')}" data-act="toggle-group" draggable="true">
           <span class="cc-caret">${isCollapsed ? '▶' : '▼'}</span>
           <span class="cc-group-swatch"></span>
-          <span class="cc-group-name">${escapeHtml(name)}</span>
-          <span class="cc-group-count">${liveCount} / ${channels.length}</span>
+          <span class="cc-group-name">${escapeHtml(g.name)}</span>
+          <span class="cc-group-count">${totalLive} / ${totalAll}</span>
+          <button class="cc-group-add-child" type="button" data-act="add-child-group" data-id="${escapeHtml(g.id)}" title="하위 그룹 추가">+</button>
+          <button class="cc-group-del" type="button" data-act="delete-group" data-id="${escapeHtml(g.id)}" title="그룹 삭제">×</button>
         </div>
-        <div class="cc-group-body">${channels.length ? channels.map((c) => channelLink(c, id)).join('') : '<div class="cc-empty">채널 없음</div>'}</div>
+        <div class="cc-group-body">${inner}</div>
       </div>
     `;
-  };
+  }
 
-  const sections = groups.map((g) => {
-    const channels = (g.channelIds || []).map((id) => byId.get(id)).filter(Boolean).sort(sortByLiveThenName);
-    return sectionHtml(g.id, g.name, g.color || '#1AE192', channels);
-  });
+  const sections = (childrenMap.get(null) || []).map((g) => renderGroupNode(g, 0));
+  if (addingTo === 'root') sections.push(renderAddInput(null));
 
   const others = followings.filter((f) => !assigned.has(f.channelId)).sort(sortByLiveThenName);
-  if (others.length) sections.push(sectionHtml(OTHER_KEY, '기타', '#666', others));
+  if (others.length) {
+    const liveCount = others.filter((c) => c.openLive).length;
+    const isCollapsed = collapsedGroups.has(OTHER_KEY);
+    sections.push(`
+      <div class="cc-group ${isCollapsed ? 'cc-group-collapsed' : ''}" data-gid="${escapeHtml(OTHER_KEY)}" data-drop="1">
+        <div class="cc-group-head" style="--cc-c: #666" data-act="toggle-group">
+          <span class="cc-caret">${isCollapsed ? '▶' : '▼'}</span>
+          <span class="cc-group-swatch"></span>
+          <span class="cc-group-name">기타</span>
+          <span class="cc-group-count">${liveCount} / ${others.length}</span>
+        </div>
+        <div class="cc-group-body">${isCollapsed ? '' : others.map((c) => channelLink(c, OTHER_KEY)).join('')}</div>
+      </div>
+    `);
+  }
 
   if (!groups.length && !followings.length) return '<div class="cc-empty">팔로잉이 없거나 치지직 로그인이 필요합니다.</div>';
   return sections.join('');
@@ -396,18 +651,27 @@ function renderBody() {
   const panel = ensurePanel();
   const body = panel.querySelector('.cc-fp-body');
   const q = searchQuery.trim().toLowerCase();
-  const filtered = q ? cachedFollowings.filter((f) => f.channelName.toLowerCase().includes(q) || (f.liveTitle || '').toLowerCase().includes(q)) : cachedFollowings;
-  body.innerHTML = viewMode === 'bygame' ? renderByGame(filtered) : renderGrouped(cachedGroups, filtered);
+  let filtered = cachedFollowings;
+  if (favOnly) filtered = filtered.filter((f) => favoriteChannels.has(f.channelId));
+  if (liveOnly) filtered = filtered.filter((f) => f.openLive);
+  if (q) filtered = filtered.filter((f) => f.channelName.toLowerCase().includes(q) || (f.liveTitle || '').toLowerCase().includes(q));
+  body.innerHTML = viewMode === 'bygame' ? renderByGame(filtered)
+    : viewMode === 'watchparty' ? renderWatchParty(filtered)
+    : viewMode === 'drops' ? renderDrops(filtered)
+    : renderGrouped(cachedGroups, filtered);
 }
 
 async function loadCollapsed() {
-  const obj = await chrome.storage.local.get([COLLAPSED_KEY, VIEW_KEY, NOTIFY_KEY, PIN_KEY]);
+  const obj = await chrome.storage.local.get([COLLAPSED_KEY, VIEW_KEY, NOTIFY_KEY, PIN_KEY, LIVE_ONLY_KEY, FAV_KEY, FAV_ONLY_KEY]);
   const arr = obj[COLLAPSED_KEY];
   if (Array.isArray(arr)) for (const id of arr) collapsedGroups.add(id);
   else { collapsedGroups.add(OTHER_KEY); collapsedGroups.add(OFFLINE_KEY); }
   if (obj[VIEW_KEY] === 'bygame') viewMode = 'bygame';
   if (Array.isArray(obj[NOTIFY_KEY])) notifyChannels = new Set(obj[NOTIFY_KEY]);
   if (obj[PIN_KEY] === true) panelPinned = true;
+  if (obj[LIVE_ONLY_KEY] === true) liveOnly = true;
+  if (Array.isArray(obj[FAV_KEY])) favoriteChannels = new Set(obj[FAV_KEY]);
+  if (obj[FAV_ONLY_KEY] === true) favOnly = true;
 }
 
 function saveCollapsed() {
@@ -420,8 +684,107 @@ function applyDefaultCollapse(groups) {
   defaultCollapseApplied = true;
 }
 
+let ctxMenuEl = null;
+function closeCtxMenu() { ctxMenuEl?.remove(); ctxMenuEl = null; }
+
+function openChannelCtxMenu(x, y, cid, cname, fromGid) {
+  closeCtxMenu();
+  const isFav = favoriteChannels.has(cid);
+  const isNotify = notifyChannels.has(cid);
+  const inGroup = fromGid && fromGid !== OTHER_KEY;
+  const items = [
+    { act: 'fav-toggle', label: isFav ? '⚡ 즐겨찾기 해제' : '⚡ 즐겨찾기' },
+    { act: 'notify-toggle', label: isNotify ? '🔔 알림 해제' : '🔕 알림 받기' },
+    inGroup ? { act: 'remove-from-group', label: '↩ 이 그룹에서 제거', cls: 'cc-ctx-warn' } : null,
+    { act: 'unfollow', label: '✕ 팔로우 취소', cls: 'cc-ctx-danger' },
+  ].filter(Boolean);
+  ctxMenuEl = document.createElement('div');
+  ctxMenuEl.id = 'cc-ctx-menu';
+  ctxMenuEl.innerHTML = items.map((it) => `<button data-act="${it.act}" class="${it.cls || ''}">${it.label}</button>`).join('');
+  ctxMenuEl.style.left = x + 'px';
+  ctxMenuEl.style.top = y + 'px';
+  document.body.appendChild(ctxMenuEl);
+  // viewport 보정
+  const rect = ctxMenuEl.getBoundingClientRect();
+  if (rect.right > window.innerWidth) ctxMenuEl.style.left = (window.innerWidth - rect.width - 8) + 'px';
+  if (rect.bottom > window.innerHeight) ctxMenuEl.style.top = (window.innerHeight - rect.height - 8) + 'px';
+  ctxMenuEl.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    closeCtxMenu();
+    const act = btn.dataset.act;
+    if (act === 'fav-toggle') {
+      if (favoriteChannels.has(cid)) favoriteChannels.delete(cid); else favoriteChannels.add(cid);
+      await chrome.storage.local.set({ [FAV_KEY]: [...favoriteChannels] });
+      renderBody();
+    } else if (act === 'notify-toggle') {
+      const wasOn = notifyChannels.has(cid);
+      if (wasOn) notifyChannels.delete(cid); else notifyChannels.add(cid);
+      await chrome.storage.local.set({ [NOTIFY_KEY]: [...notifyChannels] });
+      chrome.runtime.sendMessage({ type: wasOn ? 'clearState' : 'seedState', channelId: cid });
+      renderBody();
+    } else if (act === 'remove-from-group') {
+      const groups = await readGroups();
+      const g = groups.find((x) => x.id === fromGid);
+      if (g) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
+      await chrome.storage.local.set({ [GROUPS_KEY]: groups });
+      refresh();
+    } else if (act === 'unfollow') {
+      if (!confirm(`"${cname}" 팔로우를 취소할까요?`)) return;
+      try {
+        await unfollowChannel(cid);
+        const groups = await readGroups();
+        for (const g of groups) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
+        await chrome.storage.local.set({ [GROUPS_KEY]: groups });
+        refresh();
+      } catch (err) { alert('팔로우 취소 실패: ' + err.message); }
+    }
+  });
+}
+window.addEventListener('click', (e) => { if (!e.target.closest('#cc-ctx-menu')) closeCtxMenu(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtxMenu(); });
+
+async function commitAddGroup(formEl) {
+  if (!formEl) return;
+  const input = formEl.querySelector('input');
+  const name = input?.value.trim();
+  if (!name) { addingTo = null; renderBody(); return; }
+  const parentId = formEl.dataset.parent || null;
+  const groups = await readGroups();
+  groups.push({ id: newGroupId(), name, color: '#1AE192', channelIds: [], order: groups.length, parentId });
+  await chrome.storage.local.set({ [GROUPS_KEY]: groups });
+  addingTo = null;
+  refresh();
+}
+
 function bindGroupToggle(panel) {
+  panel.querySelector('.cc-fp-body').addEventListener('keydown', async (e) => {
+    if (!e.target.closest('.cc-group-add-input')) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      await commitAddGroup(e.target.closest('.cc-group-add-input'));
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      addingTo = null; renderBody();
+    }
+  });
+  panel.querySelector('.cc-fp-body').addEventListener('contextmenu', (e) => {
+    const row = e.target.closest('.cc-ch-row');
+    if (!row) return;
+    e.preventDefault();
+    openChannelCtxMenu(e.clientX, e.clientY, row.dataset.cid, row.dataset.cname, row.dataset.fromGid);
+  });
   panel.querySelector('.cc-fp-body').addEventListener('click', async (e) => {
+    const favBtn = e.target.closest('[data-act="fav-toggle"]');
+    if (favBtn) {
+      e.preventDefault(); e.stopPropagation();
+      const cid = favBtn.dataset.cid;
+      if (favoriteChannels.has(cid)) favoriteChannels.delete(cid);
+      else favoriteChannels.add(cid);
+      await chrome.storage.local.set({ [FAV_KEY]: [...favoriteChannels] });
+      renderBody();
+      return;
+    }
     const notifyBtn = e.target.closest('[data-act="notify-toggle"]');
     if (notifyBtn) {
       e.preventDefault(); e.stopPropagation();
@@ -442,6 +805,41 @@ function bindGroupToggle(panel) {
       const g = groups.find((x) => x.id === gid);
       if (g) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
       await chrome.storage.local.set({ [GROUPS_KEY]: groups });
+      refresh();
+      return;
+    }
+    const addChildBtn = e.target.closest('[data-act="add-child-group"]');
+    if (addChildBtn) {
+      e.preventDefault(); e.stopPropagation();
+      addingTo = addChildBtn.dataset.id;
+      renderBody();
+      setTimeout(() => panel.querySelector('.cc-group-add-input input')?.focus(), 0);
+      return;
+    }
+    const addConfirm = e.target.closest('[data-act="add-confirm"]');
+    if (addConfirm) {
+      e.preventDefault(); e.stopPropagation();
+      await commitAddGroup(addConfirm.closest('.cc-group-add-input'));
+      return;
+    }
+    const addCancel = e.target.closest('[data-act="add-cancel"]');
+    if (addCancel) {
+      e.preventDefault(); e.stopPropagation();
+      addingTo = null; renderBody();
+      return;
+    }
+    const delGroupBtn = e.target.closest('[data-act="delete-group"]');
+    if (delGroupBtn) {
+      e.preventDefault(); e.stopPropagation();
+      const id = delGroupBtn.dataset.id;
+      if (!confirm('이 그룹을 삭제할까요? (하위 그룹은 한 단계 위로 이동)')) return;
+      const groups = await readGroups();
+      const target = groups.find((g) => g.id === id);
+      const newParent = target?.parentId ?? null;
+      const next = groups
+        .filter((g) => g.id !== id)
+        .map((g) => g.parentId === id ? { ...g, parentId: newParent } : g);
+      await chrome.storage.local.set({ [GROUPS_KEY]: next });
       refresh();
       return;
     }
@@ -484,12 +882,23 @@ chrome.storage.onChanged.addListener((changes, area) => {
     notifyChannels = new Set(Array.isArray(changes[NOTIFY_KEY].newValue) ? changes[NOTIFY_KEY].newValue : []);
     renderBody();
   }
+  if (changes[FAV_KEY]) {
+    favoriteChannels = new Set(Array.isArray(changes[FAV_KEY].newValue) ? changes[FAV_KEY].newValue : []);
+    renderBody();
+  }
 });
 
 loadCollapsed().then(refresh);
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'cc-live-toast' && msg.channel) showLiveToast(msg.channel);
+  if (msg?.type === 'cc-fetch-json-proxy' && msg.url) {
+    fetch(msg.url, { credentials: 'include', cache: 'no-store' })
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)))
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ error: String(e.message ?? e) }));
+    return true;
+  }
 });
 
 let toastStackEl = null;
