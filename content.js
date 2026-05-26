@@ -20,6 +20,7 @@ const COLLAPSED_KEY = 'cc_collapsed_groups';
 let notifyChannels = new Set();
 const OTHER_KEY = '__other__';
 const VIEW_KEY = 'cc_view_mode';
+const SCROLL_KEY = 'cc_panel_scroll';
 const LIVE_ONLY_KEY = 'cc_live_only';
 let liveOnly = false;
 const collapsedGroups = new Set();
@@ -761,11 +762,10 @@ function renderGrouped(groups, followings) {
     const totalLive = descendantLiveCount(g);
     const totalAll = descendantTotalCount(g);
     const addForm = addingTo === g.id ? renderAddInput(g.id) : '';
-    const inner = isCollapsed ? '' : (
+    const inner =
       (channels.length ? channels.map((c) => channelLink(c, g.id)).join('') : (children.length || addForm ? '' : '<div class="cc-empty">채널 없음</div>'))
       + children.map((c) => renderGroupNode(c, depth + 1)).join('')
-      + addForm
-    );
+      + addForm;
     return `
       <div class="cc-group ${isCollapsed ? 'cc-group-collapsed' : ''}" data-gid="${escapeHtml(g.id)}" data-drop="1" style="margin-left:${depth * 12}px">
         <div class="cc-group-head" style="--cc-c: ${escapeHtml(g.color || '#1AE192')}" data-act="toggle-group" draggable="true">
@@ -796,7 +796,7 @@ function renderGrouped(groups, followings) {
           <span class="cc-group-name">기타</span>
           <span class="cc-group-count">${liveCount} / ${others.length}</span>
         </div>
-        <div class="cc-group-body">${isCollapsed ? '' : others.map((c) => channelLink(c, OTHER_KEY)).join('')}</div>
+        <div class="cc-group-body">${others.map((c) => channelLink(c, OTHER_KEY)).join('')}</div>
       </div>
     `);
   }
@@ -853,6 +853,18 @@ function renderBody() {
     : viewMode === 'drops' ? renderDrops(filtered)
     : viewMode === 'bytag' ? renderByTag(filtered)
     : renderGrouped(cachedGroups, filtered);
+  if (!body._ccScrollBound) {
+    body._ccScrollBound = true;
+    let scrollTimer = null;
+    body.addEventListener('scroll', () => {
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        sessionStorage.setItem(SCROLL_KEY, String(body.scrollTop));
+      }, 150);
+    });
+  }
+  const saved = parseInt(sessionStorage.getItem(SCROLL_KEY) || '0', 10);
+  if (saved > 0) body.scrollTop = saved;
 }
 
 async function loadCollapsed() {
@@ -860,7 +872,7 @@ async function loadCollapsed() {
   const arr = obj[COLLAPSED_KEY];
   if (Array.isArray(arr)) for (const id of arr) collapsedGroups.add(id);
   else { collapsedGroups.add(OTHER_KEY); collapsedGroups.add(OFFLINE_KEY); }
-  if (obj[VIEW_KEY] === 'bygame') viewMode = 'bygame';
+  if (['custom', 'bygame', 'watchparty', 'drops', 'bytag'].includes(obj[VIEW_KEY])) viewMode = obj[VIEW_KEY];
   if (Array.isArray(obj[NOTIFY_KEY])) notifyChannels = new Set(obj[NOTIFY_KEY]);
   if (obj[PIN_KEY] === true) panelPinned = true;
   if (obj[LIVE_ONLY_KEY] === true) liveOnly = true;
