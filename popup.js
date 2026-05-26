@@ -291,5 +291,20 @@ document.querySelectorAll('.tab').forEach((t) => {
   t.addEventListener('click', () => { if (t.dataset.tab === 'bookmarks') renderBookmarks(); });
 });
 
+async function initOpacity() {
+  const slider = $('opacitySlider');
+  const label = $('opacityValue');
+  if (!slider) return;
+  const { cc_panel_opacity } = await chrome.storage.local.get('cc_panel_opacity');
+  const v = typeof cc_panel_opacity === 'number' ? Math.round(cc_panel_opacity * 100) : 97;
+  slider.value = v;
+  label.textContent = v + '%';
+  slider.addEventListener('input', () => {
+    label.textContent = slider.value + '%';
+    chrome.storage.local.set({ cc_panel_opacity: parseInt(slider.value) / 100 });
+  });
+}
+
 loadAll();
 renderBookmarks();
+initOpacity();

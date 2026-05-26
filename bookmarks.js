@@ -63,7 +63,8 @@ async function setupLiveBookmark() {
   btn.title = '현재 시점 북마크 추가';
   btn.textContent = '🔖 북마크';
   const refreshBtn = header.querySelector('.cc-fp-refresh');
-  header.insertBefore(btn, refreshBtn);
+  const parent = refreshBtn?.parentElement || header;
+  parent.insertBefore(btn, refreshBtn);
   btn.addEventListener('click', async () => {
     const offset = Math.max(0, Math.floor((Date.now() - openDateMs) / 1000));
     const label = prompt(`라벨을 입력하세요 (현재 ${fmtTime(offset)})`, '');

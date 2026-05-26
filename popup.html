@@ -50,6 +50,11 @@
 </head>
 <body>
   <h1>치지직 플러그인</h1>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:6px 8px;background:#25252b;border-radius:4px;">
+    <span style="font-size:11px;color:#aaa;flex-shrink:0;">패널 투명도</span>
+    <input id="opacitySlider" type="range" min="20" max="100" step="5" value="97" style="flex:1;">
+    <span id="opacityValue" style="font-size:11px;color:#1AE192;width:32px;text-align:right;">97%</span>
+  </div>
   <div class="tabs">
     <div class="tab active" data-tab="groups">그룹</div>
     <div class="tab" data-tab="notify">알림</div>

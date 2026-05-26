@@ -255,7 +255,8 @@
     btn.title = '다시보기 다운로드';
     btn.textContent = '🎞️ 다운로드';
     const refreshBtn = header.querySelector('.cc-fp-refresh');
-    header.insertBefore(btn, refreshBtn);
+    const parent = refreshBtn?.parentElement || header;
+    parent.insertBefore(btn, refreshBtn);
     btn.addEventListener('click', () => openDownloadForVideo(videoNo() || no));
   }
 

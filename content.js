@@ -10,7 +10,12 @@ let favOnly = false;
 const POS_KEY = 'cc_panel_pos';
 const SIZE_KEY = 'cc_panel_size';
 const PIN_KEY = 'cc_panel_pinned';
+const OPACITY_KEY = 'cc_panel_opacity';
+const ICONIZED_KEY = 'cc_panel_iconized';
+const ICON_POS_KEY = 'cc_panel_icon_pos';
 let panelPinned = false;
+let panelOpacity = 0.97;
+let panelIconized = false;
 const COLLAPSED_KEY = 'cc_collapsed_groups';
 let notifyChannels = new Set();
 const OTHER_KEY = '__other__';
@@ -23,6 +28,7 @@ let searchQuery = '';
 let cachedFollowings = [];
 let cachedGroups = [];
 const watchParties = new Map(); // channelId -> { no, tag, type, drops }
+const liveTags = new Map(); // channelId -> string[]
 let addingTo = null; // null | 'root' | groupId
 
 window.addEventListener('message', (e) => {
@@ -44,6 +50,10 @@ window.addEventListener('message', (e) => {
       watchParties.delete(it.channelId);
       changed = true;
     }
+    if (Array.isArray(it.tags) && it.tags.length) {
+      liveTags.set(it.channelId, it.tags);
+      changed = true;
+    }
   }
   if (changed && cachedFollowings.length) renderBody();
 });
@@ -56,6 +66,31 @@ async function isLoggedIn() {
     const j = await r.json();
     return !!j?.content?.loggedIn;
   } catch (_) { return false; }
+}
+
+async function fetchFollowingLives() {
+  try {
+    const res = await fetch('https://api.chzzk.naver.com/service/v1/channels/following-lives?sortType=RECOMMEND', { credentials: 'include', cache: 'no-store' });
+    if (!res.ok) return;
+    const j = await res.json();
+    const list = j?.content?.followingList || [];
+    for (const it of list) {
+      const cid = it.channelId || it.channel?.channelId;
+      if (!cid) continue;
+      const li = it.liveInfo || {};
+      if (li.watchPartyNo || li.dropsCampaignNo) {
+        watchParties.set(cid, {
+          no: li.watchPartyNo || null,
+          tag: li.watchPartyTag || '',
+          type: li.watchPartyType || '',
+          drops: li.dropsCampaignNo || null,
+        });
+      } else {
+        watchParties.delete(cid);
+      }
+      if (Array.isArray(li.tags) && li.tags.length) liveTags.set(cid, li.tags);
+    }
+  } catch (_) {}
 }
 
 async function fetchFollowings({ size = 100, maxPages = 20 } = {}) {
@@ -125,13 +160,15 @@ function ensurePanel() {
         <span>팔로잉</span>
         <button class="cc-fp-pin" type="button" title="위치 고정">📌</button>
         <button class="cc-fp-refresh" type="button" title="새로고침">↻</button>
-        <button class="cc-fp-toggle" type="button" title="접기">−</button>
+        <button class="cc-fp-toggle" type="button" title="패널 접기">−</button>
+        <button class="cc-fp-iconize" type="button" title="아이콘으로 축소">◇</button>
       </div>
       <div class="cc-fp-tabs">
         <button class="cc-fp-tab" data-view="custom" type="button">내 그룹</button>
         <button class="cc-fp-tab" data-view="bygame" type="button">게임별</button>
         <button class="cc-fp-tab" data-view="watchparty" type="button" title="같이보기">🎬</button>
         <button class="cc-fp-tab" data-view="drops" type="button" title="드롭스">🎁</button>
+        <button class="cc-fp-tab" data-view="bytag" type="button" title="태그별">🏷</button>
       </div>
       <div class="cc-fp-row2">
         <button class="cc-fp-live-only" type="button" title="라이브만 보기">🔴 LIVE만</button>
@@ -140,6 +177,7 @@ function ensurePanel() {
       </div>
     </div>
     <div class="cc-fp-search-row">
+      <button class="cc-fp-expand-toggle" type="button" title="모두 펼치기/접기">⊞</button>
       <input class="cc-fp-search" type="text" placeholder="채널 검색…">
     </div>
     <div class="cc-fp-body"></div>
@@ -148,6 +186,37 @@ function ensurePanel() {
   applyPin();
   applyLiveOnly();
   applyFavOnly();
+  applyOpacity();
+  applyIconized();
+  panelEl.querySelector('.cc-fp-iconize').addEventListener('click', (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const iconSize = 44;
+    const left = Math.max(0, Math.min(window.innerWidth - iconSize, rect.left + rect.width / 2 - iconSize / 2));
+    const top = Math.max(0, Math.min(window.innerHeight - iconSize, rect.top + rect.height / 2 - iconSize / 2));
+    panelIconized = true;
+    chrome.storage.local.set({ [ICONIZED_KEY]: true, [ICON_POS_KEY]: { left: left + 'px', top: top + 'px' } });
+    applyIconized();
+  });
+  const toggleBtn = panelEl.querySelector('.cc-fp-expand-toggle');
+  const syncToggleBtn = () => {
+    const anyCollapsed = panelEl.querySelectorAll('.cc-group.cc-group-collapsed').length > 0;
+    toggleBtn.textContent = anyCollapsed ? '⊞ 모두 펼치기' : '⊟ 모두 접기';
+  };
+  toggleBtn.addEventListener('click', () => {
+    const anyCollapsed = panelEl.querySelectorAll('.cc-group.cc-group-collapsed').length > 0;
+    if (anyCollapsed) {
+      collapsedGroups.clear();
+    } else {
+      panelEl.querySelectorAll('[data-gid]').forEach((el) => {
+        const gid = el.dataset.gid;
+        if (gid) collapsedGroups.add(gid);
+      });
+    }
+    saveCollapsed();
+    renderBody();
+    syncToggleBtn();
+  });
+  setTimeout(syncToggleBtn, 100);
   panelEl.querySelector('.cc-fp-add-group').addEventListener('click', () => {
     addingTo = 'root';
     renderBody();
@@ -202,6 +271,89 @@ function applyFavOnly() {
   if (!btn) return;
   btn.classList.toggle('cc-active', favOnly);
   btn.title = favOnly ? '전체 보기로 전환' : '즐겨찾기만 보기';
+}
+
+function applyOpacity() {
+  if (!panelEl) return;
+  panelEl.style.opacity = String(panelOpacity);
+}
+
+let iconBtnEl = null;
+function applyIconized() {
+  if (!panelEl) return;
+  if (panelIconized) {
+    panelEl.style.display = 'none';
+    if (!iconBtnEl || !document.body.contains(iconBtnEl)) {
+      iconBtnEl = document.createElement('button');
+      iconBtnEl.id = 'cc-fp-icon';
+      iconBtnEl.type = 'button';
+      iconBtnEl.title = '팔로잉 패널 열기 (드래그로 이동)';
+      iconBtnEl.textContent = '📺';
+      enableIconDrag(iconBtnEl);
+      document.body.appendChild(iconBtnEl);
+      restoreIconPos(iconBtnEl);
+    }
+    iconBtnEl.style.display = 'flex';
+  } else {
+    panelEl.style.display = '';
+    if (iconBtnEl) iconBtnEl.style.display = 'none';
+  }
+}
+
+function enableIconDrag(btn) {
+  let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0, moved = false;
+  btn.addEventListener('mousedown', (e) => {
+    const rect = btn.getBoundingClientRect();
+    dragging = true; moved = false;
+    sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+    const nx = Math.max(0, Math.min(window.innerWidth - btn.offsetWidth, ox + dx));
+    const ny = Math.max(0, Math.min(window.innerHeight - btn.offsetHeight, oy + dy));
+    btn.style.left = nx + 'px';
+    btn.style.top = ny + 'px';
+    btn.style.right = 'auto';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    if (moved) {
+      chrome.storage.local.set({ [ICON_POS_KEY]: { left: btn.style.left, top: btn.style.top } });
+    }
+  });
+  btn.addEventListener('click', (e) => {
+    if (moved) { e.preventDefault(); e.stopPropagation(); return; }
+    const rect = btn.getBoundingClientRect();
+    if (panelEl) {
+      const pw = panelEl.offsetWidth || 280;
+      const ph = panelEl.offsetHeight || 400;
+      const left = Math.max(0, Math.min(window.innerWidth - pw, rect.left + rect.width / 2 - pw / 2));
+      const top = Math.max(0, Math.min(window.innerHeight - 40, rect.top + rect.height / 2 - 20));
+      panelEl.style.left = left + 'px';
+      panelEl.style.top = top + 'px';
+      panelEl.style.right = 'auto';
+      panelEl.style.bottom = 'auto';
+      chrome.storage.local.set({ [POS_KEY]: { left: panelEl.style.left, top: panelEl.style.top } });
+    }
+    panelIconized = false;
+    chrome.storage.local.set({ [ICONIZED_KEY]: false });
+    applyIconized();
+  });
+}
+
+async function restoreIconPos(btn) {
+  const { [ICON_POS_KEY]: pos } = await chrome.storage.local.get(ICON_POS_KEY);
+  if (!pos) return;
+  const left = parseInt(pos.left), top = parseInt(pos.top);
+  if (!Number.isFinite(left) || !Number.isFinite(top)) return;
+  if (left < 0 || top < 0 || left > window.innerWidth - 20 || top > window.innerHeight - 20) return;
+  btn.style.left = pos.left;
+  btn.style.top = pos.top;
+  btn.style.right = 'auto';
 }
 
 function applyPin() {
@@ -541,6 +693,41 @@ function renderDrops(followings) {
   </div>`;
 }
 
+function renderByTag(followings) {
+  const sortByLiveThenName = (a, b) => (favoriteChannels.has(b.channelId) ? 1 : 0) - (favoriteChannels.has(a.channelId) ? 1 : 0) || (b.concurrentUserCount || 0) - (a.concurrentUserCount || 0) || a.channelName.localeCompare(b.channelName);
+  const live = followings.filter((f) => f.openLive && (liveTags.get(f.channelId)?.length || 0) > 0);
+  if (!live.length) return '<div class="cc-empty">태그 정보가 있는 라이브 채널이 없습니다.</div>';
+  const byTag = new Map();
+  for (const f of live) {
+    for (const t of (liveTags.get(f.channelId) || [])) {
+      const key = t.trim().toLowerCase();
+      if (!key) continue;
+      if (!byTag.has(key)) byTag.set(key, { label: t, channels: [] });
+      byTag.get(key).channels.push(f);
+    }
+  }
+  const shared = [...byTag.entries()].filter(([_, v]) => v.channels.length >= 2)
+    .sort((a, b) => b[1].channels.length - a[1].channels.length || a[1].label.localeCompare(b[1].label));
+  if (!shared.length) return '<div class="cc-empty">공유되는 태그가 없습니다 (2개 이상 채널이 같은 태그를 가질 때 그룹화).</div>';
+  const colorFor = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return `hsl(${h % 360}, 60%, 55%)`; };
+  return shared.map(([key, info]) => {
+    const id = 'tag:' + key;
+    const isCollapsed = collapsedGroups.has(id);
+    info.channels.sort(sortByLiveThenName);
+    return `
+      <div class="cc-group ${isCollapsed ? 'cc-group-collapsed' : ''}" data-gid="${escapeHtml(id)}">
+        <div class="cc-group-head" style="--cc-c: ${colorFor(key)}" data-act="toggle-group">
+          <span class="cc-caret">${isCollapsed ? '▶' : '▼'}</span>
+          <span class="cc-group-swatch" style="background:${colorFor(key)}"></span>
+          <span class="cc-group-name">#${escapeHtml(info.label)}</span>
+          <span class="cc-group-count">${info.channels.length}</span>
+        </div>
+        <div class="cc-group-body">${info.channels.map((c) => channelLink(c, null)).join('')}</div>
+      </div>
+    `;
+  }).join('');
+}
+
 function renderGrouped(groups, followings) {
   const byId = new Map(followings.map((f) => [f.channelId, f]));
   const assigned = new Set();
@@ -583,7 +770,7 @@ function renderGrouped(groups, followings) {
       <div class="cc-group ${isCollapsed ? 'cc-group-collapsed' : ''}" data-gid="${escapeHtml(g.id)}" data-drop="1" style="margin-left:${depth * 12}px">
         <div class="cc-group-head" style="--cc-c: ${escapeHtml(g.color || '#1AE192')}" data-act="toggle-group" draggable="true">
           <span class="cc-caret">${isCollapsed ? '▶' : '▼'}</span>
-          <span class="cc-group-swatch"></span>
+          <input type="color" class="cc-group-swatch" data-act="change-color" data-id="${escapeHtml(g.id)}" value="${escapeHtml(g.color || '#1AE192')}" title="색상 변경" />
           <span class="cc-group-name">${escapeHtml(g.name)}</span>
           <span class="cc-group-count">${totalLive} / ${totalAll}</span>
           <button class="cc-group-add-child" type="button" data-act="add-child-group" data-id="${escapeHtml(g.id)}" title="하위 그룹 추가">+</button>
@@ -634,7 +821,7 @@ async function refresh() {
   }
   try {
     log('groups+followings fetch start');
-    const [groups, followings] = await Promise.all([readGroups(), fetchFollowings()]);
+    const [groups, followings] = await Promise.all([readGroups(), fetchFollowings(), fetchFollowingLives()]);
     log(`fetched groups=${groups.length} followings=${followings.length}`);
     applyDefaultCollapse(groups);
     cachedGroups = groups;
@@ -654,15 +841,22 @@ function renderBody() {
   let filtered = cachedFollowings;
   if (favOnly) filtered = filtered.filter((f) => favoriteChannels.has(f.channelId));
   if (liveOnly) filtered = filtered.filter((f) => f.openLive);
-  if (q) filtered = filtered.filter((f) => f.channelName.toLowerCase().includes(q) || (f.liveTitle || '').toLowerCase().includes(q));
+  if (q) filtered = filtered.filter((f) => {
+    if (f.channelName.toLowerCase().includes(q)) return true;
+    if ((f.liveTitle || '').toLowerCase().includes(q)) return true;
+    if ((f.liveCategoryValue || '').toLowerCase().includes(q)) return true;
+    const tags = liveTags.get(f.channelId) || [];
+    return tags.some((t) => (t || '').toLowerCase().includes(q));
+  });
   body.innerHTML = viewMode === 'bygame' ? renderByGame(filtered)
     : viewMode === 'watchparty' ? renderWatchParty(filtered)
     : viewMode === 'drops' ? renderDrops(filtered)
+    : viewMode === 'bytag' ? renderByTag(filtered)
     : renderGrouped(cachedGroups, filtered);
 }
 
 async function loadCollapsed() {
-  const obj = await chrome.storage.local.get([COLLAPSED_KEY, VIEW_KEY, NOTIFY_KEY, PIN_KEY, LIVE_ONLY_KEY, FAV_KEY, FAV_ONLY_KEY]);
+  const obj = await chrome.storage.local.get([COLLAPSED_KEY, VIEW_KEY, NOTIFY_KEY, PIN_KEY, LIVE_ONLY_KEY, FAV_KEY, FAV_ONLY_KEY, OPACITY_KEY, ICONIZED_KEY]);
   const arr = obj[COLLAPSED_KEY];
   if (Array.isArray(arr)) for (const id of arr) collapsedGroups.add(id);
   else { collapsedGroups.add(OTHER_KEY); collapsedGroups.add(OFFLINE_KEY); }
@@ -672,6 +866,8 @@ async function loadCollapsed() {
   if (obj[LIVE_ONLY_KEY] === true) liveOnly = true;
   if (Array.isArray(obj[FAV_KEY])) favoriteChannels = new Set(obj[FAV_KEY]);
   if (obj[FAV_ONLY_KEY] === true) favOnly = true;
+  if (typeof obj[OPACITY_KEY] === 'number') panelOpacity = Math.max(0.2, Math.min(1, obj[OPACITY_KEY]));
+  if (obj[ICONIZED_KEY] === true) panelIconized = true;
 }
 
 function saveCollapsed() {
@@ -758,6 +954,17 @@ async function commitAddGroup(formEl) {
 }
 
 function bindGroupToggle(panel) {
+  panel.querySelector('.cc-fp-body').addEventListener('change', async (e) => {
+    const colorEl = e.target.closest('input[data-act="change-color"]');
+    if (!colorEl) return;
+    const id = colorEl.dataset.id;
+    const newColor = colorEl.value;
+    const groups = await readGroups();
+    const g = groups.find((x) => x.id === id);
+    if (g) g.color = newColor;
+    await chrome.storage.local.set({ [GROUPS_KEY]: groups });
+    refresh();
+  });
   panel.querySelector('.cc-fp-body').addEventListener('keydown', async (e) => {
     if (!e.target.closest('.cc-group-add-input')) return;
     if (e.key === 'Enter') {
@@ -806,6 +1013,12 @@ function bindGroupToggle(panel) {
       if (g) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
       await chrome.storage.local.set({ [GROUPS_KEY]: groups });
       refresh();
+      return;
+    }
+    const colorEl = e.target.closest('[data-act="change-color"]');
+    if (colorEl) {
+      // 클릭은 input이 받아 자체적으로 picker 열어주므로 toggle만 막음
+      e.stopPropagation();
       return;
     }
     const addChildBtn = e.target.closest('[data-act="add-child-group"]');
@@ -885,6 +1098,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes[FAV_KEY]) {
     favoriteChannels = new Set(Array.isArray(changes[FAV_KEY].newValue) ? changes[FAV_KEY].newValue : []);
     renderBody();
+  }
+  if (changes[OPACITY_KEY]) {
+    const v = changes[OPACITY_KEY].newValue;
+    if (typeof v === 'number') { panelOpacity = Math.max(0.2, Math.min(1, v)); applyOpacity(); }
   }
 });
 

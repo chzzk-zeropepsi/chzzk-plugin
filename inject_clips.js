@@ -46,6 +46,7 @@
         watchPartyTag: l.watchPartyTag,
         watchPartyType: l.watchPartyType,
         dropsCampaignNo: l.dropsCampaignNo,
+        tags: l.tags || [],
       })).filter((x) => x.channelId) }, '*'); } catch (_) {}
     } else if (FOLLOWING_LIVES_RE.test(url)) {
       const list = j?.content?.followingList || [];
@@ -56,6 +57,7 @@
         watchPartyTag: it.liveInfo?.watchPartyTag,
         watchPartyType: it.liveInfo?.watchPartyType,
         dropsCampaignNo: it.liveInfo?.dropsCampaignNo,
+        tags: it.liveInfo?.tags || [],
       })).filter((x) => x.channelId) }, '*'); } catch (_) {}
     }
   };
