@@ -1,5 +1,7 @@
 # 치지직 플러그인
 
+![Downloads](https://img.shields.io/github/downloads/chzzk-zeropepsi/chzzk-plugin/total?label=다운로드&color=1AE192&style=flat-square)
+
 치지직 보조 Chrome 확장.
 
 ## 기능
