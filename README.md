@@ -1,6 +1,6 @@
 # 치지직 플러그인
 
-![Downloads](https://img.shields.io/github/downloads/chzzk-zeropepsi/chzzk-plugin/total?label=%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C&color=1AE192&style=flat-square)
+![Downloads](https://img.shields.io/github/downloads/chzzk-zeropepsi/chzzk-plugin/total?label=%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C&color=1AE192&style=flat-square&cb=1)
 
 치지직 보조 Chrome 확장.
 
