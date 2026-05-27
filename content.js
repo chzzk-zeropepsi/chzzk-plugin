@@ -1105,10 +1105,44 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.storage.local.get('cc_feat_followings').then((o) => {
   if (o.cc_feat_followings === false) return;
   loadCollapsed().then(refresh);
-  const tbObs = new MutationObserver(() => injectToolbarButton());
+  const tbObs = new MutationObserver(() => { injectToolbarButton(); syncFloatingBtn(); });
   tbObs.observe(document.body, { childList: true, subtree: true });
   injectToolbarButton();
+  ensureFloatingBtn();
+  syncFloatingBtn();
+  window.addEventListener('resize', syncFloatingBtn);
 });
+
+function ensureFloatingBtn() {
+  if (document.getElementById('cc-toolbar-btn-float')) return;
+  const fb = document.createElement('button');
+  fb.id = 'cc-toolbar-btn-float';
+  fb.type = 'button';
+  fb.title = '치지직 플러그인 패널 토글';
+  fb.innerHTML = `<img src="${chrome.runtime.getURL('icons/icon48.png')}" width="22" height="22" style="display:block;border-radius:6px;">`;
+  Object.assign(fb.style, {
+    position: 'fixed', top: '12px', right: '12px', width: '34px', height: '34px',
+    padding: '4px', display: 'none', alignItems: 'center', justifyContent: 'center',
+    background: 'rgba(30,30,36,0.85)', border: '1px solid rgba(255,255,255,0.15)',
+    borderRadius: '8px', cursor: 'pointer', zIndex: '999999',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+  });
+  fb.addEventListener('click', () => {
+    ensurePanel();
+    panelIconized = !panelIconized;
+    chrome.storage.local.set({ [ICONIZED_KEY]: panelIconized });
+    applyIconized();
+  });
+  document.body.appendChild(fb);
+}
+
+function syncFloatingBtn() {
+  const fb = document.getElementById('cc-toolbar-btn-float');
+  if (!fb) return;
+  const headerBtn = document.getElementById('cc-toolbar-btn');
+  const visible = headerBtn && headerBtn.offsetParent !== null && headerBtn.getBoundingClientRect().height > 0;
+  fb.style.display = visible ? 'none' : 'flex';
+}
 
 function injectToolbarButton() {
   const studio = document.querySelector('[class*="toolbar_studio_button"]');
