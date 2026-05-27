@@ -1,21 +1,32 @@
 // CHZZK Companion - background service worker
-// 알림 대상 채널의 라이브 전환(off->on) 감지
+// 알림 대상 채널의 라이브 전환(off->on) 감지 + Firebase 동기화
+
+import { syncOnce, listenAndPush } from './sync.js';
 
 const ALARM_NAME = 'cc-notify-poll';
+const SYNC_ALARM = 'cc-sync-poll';
+const SYNC_PERIOD_MIN = 10;
 const POLL_PERIOD_MIN = 1;
 const NOTIFY_KEY = 'notify_channels';
 const STATE_KEY = 'notify_states';
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: POLL_PERIOD_MIN });
+  chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
+  syncOnce().catch(() => {});
 });
 chrome.runtime.onStartup?.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: POLL_PERIOD_MIN });
+  chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
+  syncOnce().catch(() => {});
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) pollLiveTransitions().catch(() => {});
+  if (alarm.name === SYNC_ALARM) syncOnce().catch(() => {});
 });
+
+listenAndPush();
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'pollNow') { pollLiveTransitions().then(() => sendResponse({ ok: true })); return true; }
@@ -35,6 +46,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg?.type === 'cc-sync-now') {
+    syncOnce().then((r) => sendResponse({ ok: true, r })).catch((e) => sendResponse({ error: String(e.message ?? e) }));
+    return true;
+  }
   if (msg?.type === 'cc-download') {
     chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: false })
       .then((id) => sendResponse({ ok: true, id }))
@@ -44,16 +59,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return false;
 });
 
+async function proxyFetchJson(url) {
+  const tabs = await chrome.tabs.query({ url: 'https://chzzk.naver.com/*' });
+  if (!tabs.length) throw new Error('no-chzzk-tab');
+  const res = await chrome.tabs.sendMessage(tabs[0].id, { type: 'cc-fetch-json-proxy', url });
+  if (!res?.ok) throw new Error(res?.error || 'proxy-fail');
+  return res.data;
+}
+
 async function seedChannelState(channelId) {
   if (!channelId) return { ok: false };
   let openLive = null;
   try {
-    const res = await fetch(`https://api.chzzk.naver.com/polling/v2/channels/${encodeURIComponent(channelId)}/live-status`, { credentials: 'include', cache: 'no-store' });
-    if (res.ok) {
-      const j = await res.json();
-      const c = j?.content ?? {};
-      openLive = c.status ? c.status === 'OPEN' : !!c.openLive;
-    }
+    const j = await proxyFetchJson(`https://api.chzzk.naver.com/polling/v2/channels/${encodeURIComponent(channelId)}/live-status`);
+    const c = j?.content ?? {};
+    openLive = c.status ? c.status === 'OPEN' : !!c.openLive;
   } catch (_) {}
   const { [STATE_KEY]: prev = {} } = await chrome.storage.local.get(STATE_KEY);
   prev[channelId] = openLive === true;
@@ -71,9 +91,7 @@ async function clearChannelState(channelId) {
 async function fetchFollowingsAll({ size = 100, maxPages = 20 } = {}) {
   const all = [];
   for (let page = 0; page < maxPages; page++) {
-    const res = await fetch(`https://api.chzzk.naver.com/service/v1/channels/followings?page=${page}&size=${size}&sortType=FOLLOW`, { credentials: 'include', cache: 'no-store' });
-    if (!res.ok) throw new Error('followings ' + res.status);
-    const j = await res.json();
+    const j = await proxyFetchJson(`https://api.chzzk.naver.com/service/v1/channels/followings?page=${page}&size=${size}&sortType=FOLLOW`);
     const content = j?.content ?? {};
     const list = content.followingList ?? content.data ?? content.list ?? [];
     if (!list.length) break;

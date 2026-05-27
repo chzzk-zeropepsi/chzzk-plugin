@@ -386,6 +386,14 @@ html.cc-vertical-layout {
 html.cc-vertical-layout [class^="live_chatting_list_container"] {
   margin-top: 0 !important;
 }
+html.cc-vertical-layout [class^="live_chatting_list_fixed"] {
+  top: 8px !important;
+  bottom: auto !important;
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+  z-index: 100 !important;
+}
 html.cc-vertical-layout [class^="live_chatting_ranking_container"],
 html.cc-vertical-layout [class^="live_information_details"],
 html.cc-vertical-layout [class^="live_information_area"],

@@ -1,7 +1,9 @@
 // CHZZK Companion - 클립 다운로드
 // /clips/{uid} 페이지에서 mp4 직접 다운로드
 
-(function () {
+(async function () {
+  const featCheck = await chrome.storage.local.get('cc_feat_downloads');
+  if (featCheck.cc_feat_downloads === false) return;
   const CLIP_RE = /\/clips\/([^/?#]+)/;
   const CHANNEL_CLIPS_RE = /^\/([a-f0-9]{32})\/clips/;
   const clipCache = new Map(); // uid -> { videoId, title, recId, channelId }

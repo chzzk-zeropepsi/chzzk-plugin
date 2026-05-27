@@ -219,6 +219,8 @@ async function videoDetail(videoNo) {
 }
 
 (async function init() {
+  const o = await chrome.storage.local.get('cc_feat_bookmarks');
+  if (o.cc_feat_bookmarks === false) return;
   if (location.pathname.startsWith('/live/')) await setupLiveBookmark();
   if (location.pathname.startsWith('/video/')) await setupVodBookmark();
 })();

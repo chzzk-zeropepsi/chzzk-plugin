@@ -1,5 +1,7 @@
 // CHZZK Companion - VOD(다시보기) 다운로드
-(function () {
+(async function () {
+  const featCheck = await chrome.storage.local.get('cc_feat_downloads');
+  if (featCheck.cc_feat_downloads === false) return;
   const VIDEO_RE = /\/video\/([0-9]+)/;
   const CHANNEL_VIDEOS_RE = /^\/([a-f0-9]{32})\/videos/;
   const videoCache = new Map(); // videoNo -> { videoId, inKey, title, channelName, duration, thumbnailImageUrl }

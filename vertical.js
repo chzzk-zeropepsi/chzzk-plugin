@@ -1,5 +1,7 @@
 // CHZZK 플러그인 - 라이브 페이지 세로 레이아웃 토글
-(function () {
+(async function () {
+  const featCheck = await chrome.storage.local.get('cc_feat_vertical');
+  if (featCheck.cc_feat_vertical === false) return;
   const LIVE_RE = /\/live\/[^/?#]+/;
   const VERT_KEY = 'cc_vertical_mode';
   const HEIGHT_KEY = 'cc_chat_height_vh';

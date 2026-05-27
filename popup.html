@@ -50,6 +50,29 @@
 </head>
 <body>
   <h1>치지직 플러그인</h1>
+  <div style="margin-bottom:10px;padding:6px 8px;background:#25252b;border-radius:4px;">
+    <div style="font-size:11px;color:#aaa;margin-bottom:6px;">기능 ON/OFF (변경 시 치지직 탭 새로고침)</div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
+      <input type="checkbox" class="feat-toggle" data-key="cc_feat_followings" style="width:auto;">
+      팔로잉 패널
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
+      <input type="checkbox" class="feat-toggle" data-key="cc_feat_vertical" style="width:auto;">
+      세로 레이아웃 (긴 화면)
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
+      <input type="checkbox" class="feat-toggle" data-key="cc_feat_bookmarks" style="width:auto;">
+      다시보기 북마크
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
+      <input type="checkbox" class="feat-toggle" data-key="cc_feat_downloads" style="width:auto;">
+      클립/동영상 다운로드 버튼
+    </label>
+  </div>
+  <div style="margin-bottom:10px;padding:6px 8px;background:#25252b;border-radius:4px;display:flex;align-items:center;gap:6px;">
+    <span style="font-size:11px;color:#aaa;flex-shrink:0;">동기화</span>
+    <span id="syncStatus" style="font-size:10px;color:#888;flex:1;text-align:right;"></span>
+  </div>
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:6px 8px;background:#25252b;border-radius:4px;">
     <span style="font-size:11px;color:#aaa;flex-shrink:0;">패널 투명도</span>
     <input id="opacitySlider" type="range" min="20" max="100" step="5" value="97" style="flex:1;">

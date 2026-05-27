@@ -1,19 +1,22 @@
 {
   "manifest_version": 3,
   "name": "치지직 플러그인",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "치지직 보조 도구: 팔로잉 그룹화, 생방송 알림, 다시보기 북마크, 클립/다시보기 다운로드",
   "permissions": ["storage", "alarms", "tabs", "downloads"],
   "host_permissions": [
     "https://chzzk.naver.com/*",
     "https://api.chzzk.naver.com/*",
     "https://comm-api.game.naver.com/*",
+    "https://identitytoolkit.googleapis.com/*",
+    "https://securetoken.googleapis.com/*",
+    "https://firestore.googleapis.com/*",
     "https://creatorhub-api.naver.com/*",
     "https://apis.naver.com/*",
     "https://*.pstatic.net/*",
     "https://*.akamaized.net/*"
   ],
-  "background": { "service_worker": "background.js" },
+  "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_icon": "icons/icon128.png" },
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "content_scripts": [
@@ -25,6 +28,6 @@
     }
   ],
   "web_accessible_resources": [
-    { "resources": ["overlay/*", "inject_clips.js"], "matches": ["https://chzzk.naver.com/*"] }
+    { "resources": ["overlay/*", "inject_clips.js", "icons/*"], "matches": ["https://chzzk.naver.com/*"] }
   ]
 }

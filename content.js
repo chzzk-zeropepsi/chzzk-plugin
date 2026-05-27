@@ -279,26 +279,11 @@ function applyOpacity() {
   panelEl.style.opacity = String(panelOpacity);
 }
 
-let iconBtnEl = null;
 function applyIconized() {
   if (!panelEl) return;
-  if (panelIconized) {
-    panelEl.style.display = 'none';
-    if (!iconBtnEl || !document.body.contains(iconBtnEl)) {
-      iconBtnEl = document.createElement('button');
-      iconBtnEl.id = 'cc-fp-icon';
-      iconBtnEl.type = 'button';
-      iconBtnEl.title = '팔로잉 패널 열기 (드래그로 이동)';
-      iconBtnEl.textContent = '📺';
-      enableIconDrag(iconBtnEl);
-      document.body.appendChild(iconBtnEl);
-      restoreIconPos(iconBtnEl);
-    }
-    iconBtnEl.style.display = 'flex';
-  } else {
-    panelEl.style.display = '';
-    if (iconBtnEl) iconBtnEl.style.display = 'none';
-  }
+  panelEl.style.display = panelIconized ? 'none' : '';
+  const legacy = document.getElementById('cc-fp-icon');
+  if (legacy) legacy.remove();
 }
 
 function enableIconDrag(btn) {
@@ -1117,7 +1102,38 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-loadCollapsed().then(refresh);
+chrome.storage.local.get('cc_feat_followings').then((o) => {
+  if (o.cc_feat_followings === false) return;
+  loadCollapsed().then(refresh);
+  const tbObs = new MutationObserver(() => injectToolbarButton());
+  tbObs.observe(document.body, { childList: true, subtree: true });
+  injectToolbarButton();
+});
+
+function injectToolbarButton() {
+  const studio = document.querySelector('[class*="toolbar_studio_button"]');
+  if (!studio) return;
+  const studioBox = studio.parentElement;
+  if (!studioBox || studioBox.parentElement.querySelector('#cc-toolbar-btn')) return;
+  const box = document.createElement('div');
+  box.className = studioBox.className;
+  const btn = document.createElement('button');
+  btn.id = 'cc-toolbar-btn';
+  btn.type = 'button';
+  btn.className = studio.className;
+  btn.title = '치지직 플러그인 패널 토글';
+  const iconUrl = chrome.runtime.getURL('icons/icon48.png');
+  btn.innerHTML = `<img src="${iconUrl}" width="20" height="20" style="vertical-align:middle;margin-right:6px;border-radius:4px;" alt="">플러그인`;
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    ensurePanel();
+    panelIconized = !panelIconized;
+    chrome.storage.local.set({ [ICONIZED_KEY]: panelIconized });
+    applyIconized();
+  });
+  box.appendChild(btn);
+  studioBox.parentElement.insertBefore(box, studioBox);
+}
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'cc-live-toast' && msg.channel) showLiveToast(msg.channel);

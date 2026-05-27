@@ -3,6 +3,37 @@ import { fetchFollowings } from './chzzk_api.js';
 
 const $ = (id) => document.getElementById(id);
 
+(async function initSync() {
+  const SYNC_STATUS_KEY = 'cc_sync_status';
+  const statusEl = $('syncStatus');
+  function paintStatus(s) {
+    if (!s) { statusEl.textContent = ''; return; }
+    const color = s.kind === 'err' ? '#e74c3c' : s.kind === 'ok' ? '#1AE192' : s.kind === 'warn' ? '#e0a93b' : '#888';
+    statusEl.style.color = color;
+    statusEl.textContent = s.msg + (s.ts ? ` · ${new Date(s.ts).toLocaleTimeString()}` : '');
+  }
+  const saved = await chrome.storage.local.get(SYNC_STATUS_KEY);
+  paintStatus(saved[SYNC_STATUS_KEY]);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[SYNC_STATUS_KEY]) paintStatus(changes[SYNC_STATUS_KEY].newValue);
+  });
+  chrome.runtime.sendMessage({ type: 'cc-sync-now' });
+})();
+
+(async function initFeatureToggles() {
+  const keys = ['cc_feat_followings', 'cc_feat_vertical', 'cc_feat_bookmarks', 'cc_feat_downloads'];
+  const saved = await chrome.storage.local.get(keys);
+  document.querySelectorAll('.feat-toggle').forEach((cb) => {
+    const k = cb.dataset.key;
+    cb.checked = saved[k] !== false;
+    cb.addEventListener('change', async () => {
+      await chrome.storage.local.set({ [k]: cb.checked });
+      const tabs = await chrome.tabs.query({ url: 'https://chzzk.naver.com/*' });
+      tabs.forEach((t) => chrome.tabs.reload(t.id));
+    });
+  });
+})();
+
 document.querySelectorAll('.tab').forEach((t) => {
   t.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
