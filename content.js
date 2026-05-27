@@ -821,6 +821,7 @@ async function refresh() {
 
 function renderBody() {
   const panel = ensurePanel();
+  updateActiveTab(panel);
   const body = panel.querySelector('.cc-fp-body');
   const q = searchQuery.trim().toLowerCase();
   let filtered = cachedFollowings;
@@ -1102,15 +1103,39 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-chrome.storage.local.get('cc_feat_followings').then((o) => {
-  if (o.cc_feat_followings === false) return;
-  loadCollapsed().then(refresh);
-  const tbObs = new MutationObserver(() => { injectToolbarButton(); syncFloatingBtn(); });
-  tbObs.observe(document.body, { childList: true, subtree: true });
-  injectToolbarButton();
+let featFollowingsEnabled = true;
+function bootFollowings() {
+  if (!featFollowingsEnabled) return;
+  ensurePanel();
   ensureFloatingBtn();
+  injectToolbarButton();
   syncFloatingBtn();
+}
+
+const tbObs = new MutationObserver(() => { bootFollowings(); });
+if (document.documentElement) tbObs.observe(document.documentElement, { childList: true, subtree: true });
+setInterval(bootFollowings, 2000);
+
+chrome.storage.local.get('cc_feat_followings').then((o) => {
+  featFollowingsEnabled = o.cc_feat_followings !== false;
+  if (!featFollowingsEnabled) return;
+  bootFollowings();
+  loadCollapsed().then(refresh);
   window.addEventListener('resize', syncFloatingBtn);
+  window.addEventListener('pageshow', () => {
+    ensurePanel();
+    injectToolbarButton();
+    ensureFloatingBtn();
+    syncFloatingBtn();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      ensurePanel();
+      injectToolbarButton();
+      ensureFloatingBtn();
+      syncFloatingBtn();
+    }
+  });
 });
 
 function ensureFloatingBtn() {

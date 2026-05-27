@@ -144,7 +144,25 @@
     if (viewmodeBtn) bar.insertBefore(btn, viewmodeBtn);
     else bar.appendChild(btn);
     syncBtn();
+    mirrorVisibility();
   }
+
+  function isHidden(el) {
+    if (!el) return true;
+    if (el.offsetParent === null) return true;
+    const cs = getComputedStyle(el);
+    return cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0;
+  }
+  function mirrorVisibility() {
+    const btn = document.getElementById('cc-vert-btn');
+    if (!btn) return;
+    const bar = document.querySelector('.pzp-pc__bottom-buttons')
+      || document.querySelector('.pzp-pc__bottom-buttons-right');
+    const ref = document.querySelector('.pzp-viewmode-button, .pzp-pc__viewmode-button')
+      || document.querySelector('.pzp-fullscreen-button, .pzp-pc__fullscreen-button');
+    btn.style.display = (isHidden(bar) || isHidden(ref)) ? 'none' : '';
+  }
+  setInterval(mirrorVisibility, 500);
 
   const obs = new MutationObserver(() => {
     injectButton();
