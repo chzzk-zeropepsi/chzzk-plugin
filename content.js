@@ -866,6 +866,7 @@ async function loadCollapsed() {
   if (obj[FAV_ONLY_KEY] === true) favOnly = true;
   if (typeof obj[OPACITY_KEY] === 'number') panelOpacity = Math.max(0.2, Math.min(1, obj[OPACITY_KEY]));
   if (obj[ICONIZED_KEY] === true) panelIconized = true;
+  if (panelEl) applyIconized();
 }
 
 function saveCollapsed() {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "치지직 플러그인",
-  "version": "0.0.8",
+  "version": "0.0.8.1",
   "description": "치지직 보조 도구: 팔로잉 그룹화, 생방송 알림, 다시보기 북마크, 클립/다시보기 다운로드",
   "permissions": ["storage", "alarms", "tabs", "downloads"],
   "host_permissions": [
