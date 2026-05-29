@@ -1,7 +1,7 @@
 // CHZZK Companion - background service worker
 // 알림 대상 채널의 라이브 전환(off->on) 감지 + Firebase 동기화
 
-import { syncOnce, listenAndPush } from './sync.js';
+import { syncOnce, listenAndPush } from './lib/sync.js';
 
 const ALARM_NAME = 'cc-notify-poll';
 const SYNC_ALARM = 'cc-sync-poll';
@@ -44,6 +44,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ error: String(e.message ?? e) });
       }
     })();
+    return true;
+  }
+  if (msg?.type === 'cc-bg-fetch-text') {
+    fetch(msg.url, { credentials: 'omit', cache: 'no-store' })
+      .then(async (r) => ({ ok: r.ok, status: r.status, text: await r.text() }))
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ ok: false, error: String(e.message ?? e) }));
+    return true;
+  }
+  if (msg?.type === 'cc-bg-fetch-bin') {
+    fetch(msg.url, { credentials: 'omit', cache: 'no-store' })
+      .then(async (r) => {
+        if (!r.ok) return { ok: false, status: r.status };
+        const buf = await r.arrayBuffer();
+        const u8 = new Uint8Array(buf);
+        let bin = '';
+        const CHUNK = 0x8000;
+        for (let i = 0; i < u8.length; i += CHUNK) {
+          bin += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+        }
+        return { ok: true, status: r.status, b64: btoa(bin) };
+      })
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ ok: false, error: String(e.message ?? e) }));
     return true;
   }
   if (msg?.type === 'cc-sync-now') {

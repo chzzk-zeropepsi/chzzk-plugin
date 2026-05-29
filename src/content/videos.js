@@ -5,6 +5,14 @@
   const VIDEO_RE = /\/video\/([0-9]+)/;
   const CHANNEL_VIDEOS_RE = /^\/([a-f0-9]{32})\/videos/;
   const videoCache = new Map(); // videoNo -> { videoId, inKey, title, channelName, duration, thumbnailImageUrl }
+  let capturedRewindMaster = null; // URL of vod_playlist.m3u8 captured from current /video page
+
+  try {
+    const s = document.createElement('script');
+    s.src = chrome.runtime.getURL('inject_rewind.js');
+    s.onload = () => s.remove();
+    (document.head || document.documentElement).appendChild(s);
+  } catch (_) {}
 
   function videoNo() {
     const m = location.pathname.match(VIDEO_RE);
@@ -29,6 +37,8 @@
       if (!d.videoNo) return;
       const prev = videoCache.get(String(d.videoNo)) || {};
       videoCache.set(String(d.videoNo), { ...prev, ...d });
+    } else if (e.data?.source === 'cc-rewind-manifest') {
+      capturedRewindMaster = e.data.url;
     }
   });
 
@@ -213,6 +223,153 @@
     } catch (_) {}
   }
 
+  function parseMasterM3u8(text, baseUrl) {
+    const lines = text.split(/\r?\n/);
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i].trim();
+      if (!l.startsWith('#EXT-X-STREAM-INF')) continue;
+      const attrs = {};
+      l.replace(/([A-Z0-9-]+)=("([^"]*)"|([^,]*))/g, (_, k, _v, q, b) => { attrs[k] = q ?? b; });
+      const uri = (lines[i + 1] || '').trim();
+      if (!uri || uri.startsWith('#')) continue;
+      const res = (attrs.RESOLUTION || '').split('x');
+      out.push({
+        bandwidth: parseInt(attrs.BANDWIDTH) || 0,
+        width: parseInt(res[0]) || 0,
+        height: parseInt(res[1]) || 0,
+        url: new URL(uri, baseUrl).toString(),
+      });
+    }
+    return out;
+  }
+  function parseMediaM3u8(text, baseUrl) {
+    const lines = text.split(/\r?\n/);
+    let initUrl = null;
+    const segs = [];
+    let totalDur = 0;
+    let pendingDur = 0;
+    for (const raw of lines) {
+      const l = raw.trim();
+      if (!l) continue;
+      if (l.startsWith('#EXT-X-MAP')) {
+        const m = l.match(/URI="([^"]+)"/);
+        if (m) initUrl = new URL(m[1], baseUrl).toString();
+      } else if (l.startsWith('#EXTINF')) {
+        pendingDur = parseFloat(l.split(':')[1]) || 0;
+      } else if (!l.startsWith('#')) {
+        segs.push({ url: new URL(l, baseUrl).toString(), dur: pendingDur });
+        totalDur += pendingDur;
+        pendingDur = 0;
+      }
+    }
+    return { initUrl, segs, totalDur };
+  }
+
+  async function downloadRewind(meta, pick) {
+    const progressEl = modalEl?.querySelector('.cc-vod-progress');
+    const fillEl = modalEl?.querySelector('.cc-vod-fill');
+    const statusEl = modalEl?.querySelector('.cc-vod-status');
+    const list = modalEl?.querySelector('.cc-vod-list');
+    if (progressEl) progressEl.hidden = false;
+    if (list) list.style.display = 'none';
+    const setProg = (done, total, label) => {
+      if (fillEl) fillEl.style.width = ((done/total)*100).toFixed(1) + '%';
+      if (statusEl) statusEl.textContent = label || `${done}/${total}`;
+    };
+
+    try {
+      setProg(0, 1, `${pick.height}p 청크리스트 로딩…`);
+      const chunklistRes = await fetch(pick.url, { credentials: 'omit', cache: 'no-store' });
+      if (!chunklistRes.ok) throw new Error('chunklist ' + chunklistRes.status);
+      const { initUrl, segs, totalDur } = parseMediaM3u8(await chunklistRes.text(), pick.url);
+      if (!segs.length) throw new Error('청크 없음');
+
+      const total = segs.length + (initUrl ? 1 : 0);
+      const buffers = new Array(total);
+      let done = 0;
+
+      if (initUrl) {
+        const r = await fetch(initUrl, { credentials: 'omit', cache: 'no-store' });
+        if (!r.ok) throw new Error('init ' + r.status);
+        buffers[0] = await r.arrayBuffer();
+        done++;
+        setProg(done, total, `다운로드 중 (${pick.height}p, ${fmtDur(totalDur)})…`);
+      }
+
+      const concurrency = 8;
+      let next = 0;
+      async function worker() {
+        while (true) {
+          const i = next++;
+          if (i >= segs.length) return;
+          const r = await fetch(segs[i].url, { credentials: 'omit', cache: 'no-store' });
+          if (!r.ok) throw new Error(`segment ${i} ${r.status}`);
+          buffers[(initUrl ? 1 : 0) + i] = await r.arrayBuffer();
+          done++;
+          if (done % 10 === 0 || done === total) setProg(done, total, `다운로드 중 (${pick.height}p, ${fmtDur(totalDur)})…`);
+        }
+      }
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+      setProg(total, total, '파일 생성 중…');
+      const blob = new Blob(buffers, { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      const filename = `${sanitize(meta.channelName || '')}_${sanitize(meta.title || meta.videoNo)}_${pick.height}p_rewind.m4s`;
+      await chrome.runtime.sendMessage({ type: 'cc-download', url, filename });
+      setProg(total, total, '✓ 저장됨');
+      setTimeout(() => { URL.revokeObjectURL(url); closeModal(); }, 2000);
+    } catch (e) {
+      if (statusEl) statusEl.textContent = '실패: ' + e.message;
+    }
+  }
+
+  function showRewindModal(meta, masterUrl) {
+    closeModal();
+    modalEl = document.createElement('div');
+    modalEl.id = 'cc-vod-modal';
+    modalEl.innerHTML = `
+      <div class="cc-vod-backdrop"></div>
+      <div class="cc-vod-box">
+        <div class="cc-vod-head">
+          <span>${escapeHtml(meta.title || meta.videoNo)} <em style="color:#e0a93b;font-style:normal;">(실험적: 라이브 다시보기 직접)</em></span>
+          <button class="cc-vod-close" type="button">✕</button>
+        </div>
+        <div class="cc-vod-info">트랜스코딩 전 영상입니다. 화질을 선택하세요.</div>
+        <div class="cc-vod-warn">HDN 토큰이 만료되면(약 1시간) 중간에 실패할 수 있습니다. 그땐 페이지 재생을 다시 눌러서 manifest 재캡처 후 시도하세요.</div>
+        <div class="cc-vod-progress" hidden>
+          <div class="cc-vod-bar"><div class="cc-vod-fill"></div></div>
+          <div class="cc-vod-status">준비 중…</div>
+        </div>
+        <div class="cc-vod-list">화질 정보 로딩 중…</div>
+      </div>
+    `;
+    document.body.appendChild(modalEl);
+    modalEl.querySelector('.cc-vod-close').addEventListener('click', closeModal);
+    modalEl.querySelector('.cc-vod-backdrop').addEventListener('click', closeModal);
+
+    (async () => {
+      try {
+        const r = await fetch(masterUrl, { credentials: 'omit', cache: 'no-store' });
+        if (!r.ok) throw new Error('master ' + r.status);
+        const variants = parseMasterM3u8(await r.text(), masterUrl).sort((a, b) => b.height - a.height);
+        if (!variants.length) throw new Error('변종 없음');
+        const list = modalEl.querySelector('.cc-vod-list');
+        list.innerHTML = variants.map((v, i) => `
+          <button class="cc-vod-q" data-i="${i}">
+            <div class="cc-vod-q-main">${v.height}p</div>
+            <div class="cc-vod-q-sub">${(v.bandwidth / 1e6).toFixed(1)} Mbps</div>
+          </button>
+        `).join('');
+        list.querySelectorAll('.cc-vod-q').forEach((b) => {
+          b.addEventListener('click', () => downloadRewind(meta, variants[parseInt(b.dataset.i)]));
+        });
+      } catch (e) {
+        modalEl.querySelector('.cc-vod-list').textContent = '실패: ' + e.message;
+      }
+    })();
+  }
+
   async function openDownloadForVideo(no) {
     let meta = videoCache.get(String(no));
     if (!meta?.videoId || !meta?.inKey) {
@@ -223,7 +380,11 @@
       } catch (e) { alert('비디오 정보 로드 실패: ' + e.message); return; }
     }
     if (!meta.inKey) {
-      alert('이 다시보기는 아직 다운로드할 수 없습니다.\n(트랜스코딩 처리 중일 수 있습니다 — 라이브 종료 후 보통 수십분~수시간 후 가능)');
+      if (capturedRewindMaster) {
+        showRewindModal(meta, capturedRewindMaster);
+        return;
+      }
+      alert('이 다시보기는 아직 다운로드할 수 없습니다.\n(트랜스코딩 처리 중)\n\n트랜스코딩 전이라도 다운로드를 시도하려면:\n해당 다시보기 페이지에서 ▶ 한 번 눌러서 재생을 시작한 뒤 다시 시도하세요.');
       return;
     }
     let mpd;
@@ -264,7 +425,7 @@
 
   // ───── 채널 비디오 목록 오버레이 ─────
   function injectListOverlays(scope) {
-    const links = (scope || document).querySelectorAll('a[href*="/video/"]');
+    const links = (scope || document).querySelectorAll('a[class*="video_card_thumbnail"][href*="/video/"]');
     for (const a of links) {
       const m = a.getAttribute('href')?.match(VIDEO_RE);
       if (!m) continue;

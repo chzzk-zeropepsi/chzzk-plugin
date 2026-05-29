@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "치지직 플러그인",
-  "version": "0.0.8.1",
+  "version": "0.2.0",
   "description": "치지직 보조 도구: 팔로잉 그룹화, 생방송 알림, 다시보기 북마크, 클립/다시보기 다운로드",
   "permissions": ["storage", "alarms", "tabs", "downloads"],
   "host_permissions": [
@@ -14,20 +14,29 @@
     "https://creatorhub-api.naver.com/*",
     "https://apis.naver.com/*",
     "https://*.pstatic.net/*",
-    "https://*.akamaized.net/*"
+    "https://*.akamaized.net/*",
+    "https://*.navercdn.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_popup": "popup.html", "default_icon": "icons/icon128.png" },
+  "background": { "service_worker": "src/background.js", "type": "module" },
+  "action": { "default_popup": "src/popup/popup.html", "default_icon": "icons/icon128.png" },
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "content_scripts": [
     {
       "matches": ["https://chzzk.naver.com/*"],
-      "js": ["content.js", "bookmarks.js", "clips.js", "videos.js", "vertical.js"],
-      "css": ["content.css"],
+      "js": ["src/inject/inject_rewind.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://chzzk.naver.com/*"],
+      "js": ["src/content/content.js", "src/content/bookmarks.js", "src/content/clips.js", "src/content/videos.js", "src/content/live_record.js", "src/content/vertical.js"],
+      "css": ["src/content/content.css"],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
-    { "resources": ["overlay/*", "inject_clips.js", "icons/*"], "matches": ["https://chzzk.naver.com/*"] }
+    { "resources": ["overlay/*", "src/inject/inject_clips.js", "src/inject/inject_rewind.js", "icons/*"], "matches": ["https://chzzk.naver.com/*"] }
   ]
 }

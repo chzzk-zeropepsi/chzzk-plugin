@@ -10,6 +10,7 @@ export const SYNC_STATUS_KEY = 'cc_sync_status';
 const DENY = new Set([
   SYNC_ENABLED_KEY, SYNC_AUTH_KEY, SYNC_META_KEY, SYNC_USER_KEY, SYNC_STATUS_KEY,
   'notify_states',
+  'cc_active_recordings', // 탭별 ephemeral 상태
 ]);
 
 function configured() {
@@ -148,7 +149,10 @@ export async function syncOnce() {
       return { action: 'push-initial', ts };
     }
     if (remoteUpdatedAt > localUpdatedAt) {
-      const remoteData = remote.data || {};
+      const rawRemote = remote.data || {};
+      // DENY 키는 원격에서 가져오지 않음 (이전 버그로 인한 stale data 차단)
+      const remoteData = {};
+      for (const [k, v] of Object.entries(rawRemote)) if (!DENY.has(k)) remoteData[k] = v;
       const toRemove = Object.keys(all).filter((k) => !DENY.has(k) && !(k in remoteData));
       if (toRemove.length) await chrome.storage.local.remove(toRemove);
       await chrome.storage.local.set({ ...remoteData, [SYNC_META_KEY]: { updatedAt: remoteUpdatedAt, lastPulledAt: Date.now() } });

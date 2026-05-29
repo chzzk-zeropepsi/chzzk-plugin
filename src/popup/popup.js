@@ -1,5 +1,5 @@
-import { readGroups, upsertGroup, deleteGroup, assignChannelToGroup, unassignChannel, newGroupId, readNotifyChannels, toggleNotifyChannel, readAllBookmarks, deleteBookmarkItem, updateBookmarkLabel, deleteBookmarkEntry } from './storage.js';
-import { fetchFollowings } from './chzzk_api.js';
+import { readGroups, upsertGroup, deleteGroup, assignChannelToGroup, unassignChannel, newGroupId, readNotifyChannels, toggleNotifyChannel, readAllBookmarks, deleteBookmarkItem, updateBookmarkLabel, deleteBookmarkEntry } from '../lib/storage.js';
+import { fetchFollowings } from '../lib/chzzk_api.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -22,12 +22,15 @@ const $ = (id) => document.getElementById(id);
 
 (async function initFeatureToggles() {
   const keys = ['cc_feat_followings', 'cc_feat_vertical', 'cc_feat_bookmarks', 'cc_feat_downloads'];
+  const noReloadKeys = new Set();
   const saved = await chrome.storage.local.get(keys);
   document.querySelectorAll('.feat-toggle').forEach((cb) => {
     const k = cb.dataset.key;
+    // multi_record는 기본 OFF (명시적 opt-in), 나머지는 기본 ON
     cb.checked = saved[k] !== false;
     cb.addEventListener('change', async () => {
       await chrome.storage.local.set({ [k]: cb.checked });
+      if (noReloadKeys.has(k)) return;
       const tabs = await chrome.tabs.query({ url: 'https://chzzk.naver.com/*' });
       tabs.forEach((t) => chrome.tabs.reload(t.id));
     });

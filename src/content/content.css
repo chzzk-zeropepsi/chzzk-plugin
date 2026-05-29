@@ -155,7 +155,7 @@
   font: 12px/1.4 -apple-system, sans-serif;
   animation: cc-toast-in 0.25s ease-out;
 }
-#cc-toast-stack .cc-toast.cc-toast-leaving { animation: cc-toast-out 0.25s ease-in forwards; }
+#cc-toast-stack .cc-toast.cc-toast-leaving { animation: cc-toast-out 1.2s ease-in forwards; }
 #cc-toast-stack .cc-toast-img { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 #cc-toast-stack .cc-toast-body { flex: 1; min-width: 0; }
 #cc-toast-stack .cc-toast-name { font-weight: 700; display: flex; align-items: center; gap: 6px; }
@@ -166,10 +166,19 @@
 #cc-toast-stack .cc-toast-go { background: #1AE192; color: #111; padding: 3px 10px; border-radius: 4px; text-decoration: none; font-weight: 600; font-size: 11px; }
 #cc-toast-stack .cc-toast-close { background: transparent; border: 1px solid #555; color: #ccc; padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
 @keyframes cc-toast-in { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes cc-toast-out { to { transform: translateX(20px); opacity: 0; } }
+@keyframes cc-toast-out { to { opacity: 0; transform: translateX(8px); } }
 
 #cc-bm-btn { font-size: 13px !important; }
 #cc-bm-btn.cc-bm-flash { background: #1AE192 !important; color: #111 !important; border-color: #1AE192 !important; }
+.cc-icon-btn { position: relative; min-width: 26px; padding: 2px 6px !important; }
+.cc-icon-btn:hover::after {
+  content: attr(title);
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  margin-top: 4px; padding: 3px 7px; font-size: 11px; line-height: 1;
+  background: #111; color: #fff; border-radius: 3px; white-space: nowrap;
+  pointer-events: none; z-index: 10000;
+}
+.cc-icon-btn[title=""]:hover::after { display: none; }
 
 #cc-clip-dl-btn { font-size: 13px !important; }
 

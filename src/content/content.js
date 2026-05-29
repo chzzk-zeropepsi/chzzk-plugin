@@ -499,7 +499,7 @@ function enableDrag(panel, handle) {
   let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
   handle.addEventListener('mousedown', (e) => {
     if (panelPinned) return;
-    if (e.target.closest('button')) return;
+    if (e.target.closest('button, select, input, textarea, a')) return;
     const rect = panel.getBoundingClientRect();
     dragging = true; sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
     panel.style.right = 'auto'; panel.style.bottom = 'auto';
@@ -1235,7 +1235,9 @@ function showLiveToast(ch) {
     </div>
   `;
   stack.appendChild(toast);
-  const close = () => { toast.classList.add('cc-toast-leaving'); setTimeout(() => toast.remove(), 250); };
+  const close = () => { toast.classList.add('cc-toast-leaving'); setTimeout(() => toast.remove(), 1200); };
   toast.querySelector('.cc-toast-close').addEventListener('click', close);
   toast.querySelector('.cc-toast-go').addEventListener('click', close);
+  const autoFadeTimer = setTimeout(close, 10000);
+  toast.addEventListener('mouseenter', () => clearTimeout(autoFadeTimer));
 }

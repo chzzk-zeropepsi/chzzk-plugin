@@ -61,7 +61,8 @@ async function setupLiveBookmark() {
   btn.id = 'cc-bm-btn';
   btn.type = 'button';
   btn.title = '현재 시점 북마크 추가';
-  btn.textContent = '🔖 북마크';
+  btn.textContent = '🔖';
+  btn.classList.add('cc-icon-btn');
   const refreshBtn = header.querySelector('.cc-fp-refresh');
   const parent = refreshBtn?.parentElement || header;
   parent.insertBefore(btn, refreshBtn);
