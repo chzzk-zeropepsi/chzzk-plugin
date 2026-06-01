@@ -26,6 +26,18 @@ let liveOnly = false;
 const collapsedGroups = new Set();
 let viewMode = 'custom';
 let searchQuery = '';
+
+// 한글 음절을 초성 문자열로 변환 (예: "치지직" → "ㅊㅈㅈ"). 비한글은 그대로 유지.
+const HANGUL_INITIALS = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+function toInitials(str) {
+  let out = '';
+  for (const ch of String(str)) {
+    const code = ch.charCodeAt(0);
+    if (code >= 0xAC00 && code <= 0xD7A3) out += HANGUL_INITIALS[Math.floor((code - 0xAC00) / 588)];
+    else out += ch.toLowerCase();
+  }
+  return out;
+}
 let cachedFollowings = [];
 let cachedGroups = [];
 const watchParties = new Map(); // channelId -> { no, tag, type, drops }
@@ -167,6 +179,7 @@ function ensurePanel() {
       <div class="cc-fp-tabs">
         <button class="cc-fp-tab" data-view="custom" type="button">내 그룹</button>
         <button class="cc-fp-tab" data-view="bygame" type="button">게임별</button>
+        <button class="cc-fp-tab" data-view="subscribe" type="button" title="내 구독 채널">⭐</button>
         <button class="cc-fp-tab" data-view="watchparty" type="button" title="같이보기">🎬</button>
         <button class="cc-fp-tab" data-view="drops" type="button" title="드롭스">🎁</button>
         <button class="cc-fp-tab" data-view="bytag" type="button" title="태그별">🏷</button>
@@ -623,6 +636,71 @@ function renderByGame(followings) {
   return sections.join('');
 }
 
+// nextPublishYmdt에서 publishPeriod(개월) 빼서 받은 추정일 계산 (선물은 보통 1개월)
+function estimatedReceivedDate(nextPublishYmdt, publishPeriod) {
+  if (!nextPublishYmdt) return '';
+  const m = String(nextPublishYmdt).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '';
+  const months = Math.max(1, parseInt(publishPeriod) || 1);
+  const d = new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+  d.setMonth(d.getMonth() - months);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+let cachedSubscriptions = null;
+let subscriptionsFetchedAt = 0;
+async function fetchSubscriptions(force) {
+  if (!force && cachedSubscriptions && Date.now() - subscriptionsFetchedAt < 60000) return cachedSubscriptions;
+  try {
+    const r = await fetch('https://api.chzzk.naver.com/commercial/v1/subscribe/channels', { credentials: 'include', cache: 'no-store' });
+    const j = await r.json();
+    cachedSubscriptions = Array.isArray(j?.content) ? j.content : [];
+    subscriptionsFetchedAt = Date.now();
+  } catch (_) { cachedSubscriptions = cachedSubscriptions || []; }
+  return cachedSubscriptions;
+}
+
+function renderSubscribe(followings) {
+  const subs = cachedSubscriptions;
+  if (!subs) {
+    fetchSubscriptions().then(() => refresh());
+    return '<div class="cc-empty">구독 목록 불러오는 중…</div>';
+  }
+  if (!subs.length) return '<div class="cc-empty">구독 중인 채널이 없습니다.</div>';
+  const followingByCid = new Map(followings.map((f) => [f.channelId, f]));
+  // 상태/만료일 순서: COMPLETE 먼저, 그 다음 만료일 임박 순
+  const sorted = [...subs].sort((a, b) => {
+    const sa = a.status === 'COMPLETE' ? 0 : 1;
+    const sb = b.status === 'COMPLETE' ? 0 : 1;
+    if (sa !== sb) return sa - sb;
+    return (a.nextPublishYmdt || '').localeCompare(b.nextPublishYmdt || '');
+  });
+  const rows = sorted.map((s) => {
+    // 팔로잉 데이터에 있으면 라이브 상태 등 활용, 없으면 sub 정보로 채움
+    const f = followingByCid.get(s.channelId) || {
+      channelId: s.channelId,
+      channelName: s.channelName,
+      channelImageUrl: s.channelImageUrl,
+      openLive: false,
+      concurrentUserCount: 0,
+      liveTitle: '',
+    };
+    const link = channelLink(f, null);
+    // line1 끝부분에 구독 배지 추가
+    const recvDate = s.isGift ? estimatedReceivedDate(s.nextPublishYmdt, s.publishPeriod) : '';
+    const giftBadge = s.isGift ? `<span class="cc-ch-ind" title="선물 받은 추정일: ${recvDate}" style="background:#e0a93b;color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;">🎁 ${recvDate.slice(5)}</span>` : '';
+    const tierBadge = `<span class="cc-ch-ind" title="${escapeHtml(s.tierName || '')} · ${s.totalMonth}개월" style="background:rgba(26,225,146,0.15);color:#1AE192;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;">⭐ ${s.totalMonth}개월</span>`;
+    const cancelBadge = s.status === 'CANCEL' ? '<span class="cc-ch-ind" style="background:#444;color:#aaa;padding:1px 5px;border-radius:3px;font-size:9px;">해지예정</span>' : '';
+    const badges = giftBadge + tierBadge + cancelBadge;
+    // line1 마지막에 삽입 (</div> 직전)
+    return link.replace(
+      /(<div class="cc-ch-line1">[\s\S]*?)(<\/div>\s*(?:<div class="cc-ch-line2"|<\/div>))/,
+      `$1${badges}$2`
+    );
+  }).join('');
+  return rows;
+}
+
 function renderAddInput(parentId) {
   return `
     <div class="cc-group-add-input" data-parent="${escapeHtml(parentId || '')}">
@@ -827,14 +905,23 @@ function renderBody() {
   let filtered = cachedFollowings;
   if (favOnly) filtered = filtered.filter((f) => favoriteChannels.has(f.channelId));
   if (liveOnly) filtered = filtered.filter((f) => f.openLive);
+  // 초성 검색: 쿼리가 한글 자음(ㄱ-ㅎ)만으로 구성되면 채널명/제목의 초성으로도 매칭
+  const initialsQ = /^[ㄱ-ㅎ]+$/.test(q) ? q : null;
   if (q) filtered = filtered.filter((f) => {
     if (f.channelName.toLowerCase().includes(q)) return true;
     if ((f.liveTitle || '').toLowerCase().includes(q)) return true;
     if ((f.liveCategoryValue || '').toLowerCase().includes(q)) return true;
+    if (initialsQ) {
+      if (toInitials(f.channelName).includes(initialsQ)) return true;
+      if (toInitials(f.liveTitle || '').includes(initialsQ)) return true;
+    }
     const tags = liveTags.get(f.channelId) || [];
-    return tags.some((t) => (t || '').toLowerCase().includes(q));
+    if (tags.some((t) => (t || '').toLowerCase().includes(q))) return true;
+    if (initialsQ && tags.some((t) => toInitials(t || '').includes(initialsQ))) return true;
+    return false;
   });
   body.innerHTML = viewMode === 'bygame' ? renderByGame(filtered)
+    : viewMode === 'subscribe' ? renderSubscribe(filtered)
     : viewMode === 'watchparty' ? renderWatchParty(filtered)
     : viewMode === 'drops' ? renderDrops(filtered)
     : viewMode === 'bytag' ? renderByTag(filtered)
@@ -858,7 +945,7 @@ async function loadCollapsed() {
   const arr = obj[COLLAPSED_KEY];
   if (Array.isArray(arr)) for (const id of arr) collapsedGroups.add(id);
   else { collapsedGroups.add(OTHER_KEY); collapsedGroups.add(OFFLINE_KEY); }
-  if (['custom', 'bygame', 'watchparty', 'drops', 'bytag'].includes(obj[VIEW_KEY])) viewMode = obj[VIEW_KEY];
+  if (['custom', 'bygame', 'subscribe', 'watchparty', 'drops', 'bytag'].includes(obj[VIEW_KEY])) viewMode = obj[VIEW_KEY];
   if (Array.isArray(obj[NOTIFY_KEY])) notifyChannels = new Set(obj[NOTIFY_KEY]);
   if (obj[PIN_KEY] === true) panelPinned = true;
   if (obj[LIVE_ONLY_KEY] === true) liveOnly = true;
@@ -1197,6 +1284,7 @@ function injectToolbarButton() {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'cc-live-toast' && msg.channel) showLiveToast(msg.channel);
+  if (msg?.type === 'cc-gift-toast' && msg.gift) showGiftToast(msg.gift);
   if (msg?.type === 'cc-fetch-json-proxy' && msg.url) {
     fetch(msg.url, { credentials: 'include', cache: 'no-store' })
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)))
@@ -1213,6 +1301,36 @@ function ensureToastStack() {
   toastStackEl.id = 'cc-toast-stack';
   document.body.appendChild(toastStackEl);
   return toastStackEl;
+}
+
+function showGiftToast(g) {
+  const stack = ensureToastStack();
+  const key = `gift:${g.channelId}:${g.nextPublishYmdt || ''}`;
+  const existing = stack.querySelector(`[data-cid="${CSS.escape(key)}"]`);
+  if (existing) return;
+  const toast = document.createElement('div');
+  toast.className = 'cc-toast';
+  toast.dataset.cid = key;
+  const exp = (g.nextPublishYmdt || '').slice(0, 10);
+  const recv = estimatedReceivedDate(g.nextPublishYmdt, g.publishPeriod);
+  toast.innerHTML = `
+    ${g.channelImageUrl ? `<img class="cc-toast-img" src="${escapeHtml(g.channelImageUrl)}">` : ''}
+    <div class="cc-toast-body">
+      <div class="cc-toast-name">🎁 ${escapeHtml(g.channelName)} <span class="cc-toast-live" style="background:#e0a93b;">GIFT</span></div>
+      <div class="cc-toast-title">${escapeHtml(g.tierName || g.tier || '')} 구독 선물 받음</div>
+      ${recv ? `<div class="cc-toast-cat">받은 추정: ${escapeHtml(recv)} · 만료: ${escapeHtml(exp)}</div>` : (exp ? `<div class="cc-toast-cat">만료: ${escapeHtml(exp)}</div>` : '')}
+      <div class="cc-toast-actions">
+        <a class="cc-toast-go" href="https://chzzk.naver.com/${encodeURIComponent(g.channelId)}">채널 가기</a>
+        <button class="cc-toast-close" type="button">닫기</button>
+      </div>
+    </div>
+  `;
+  stack.appendChild(toast);
+  const close = () => { toast.classList.add('cc-toast-leaving'); setTimeout(() => toast.remove(), 1200); };
+  toast.querySelector('.cc-toast-close').addEventListener('click', close);
+  toast.querySelector('.cc-toast-go').addEventListener('click', close);
+  const autoFadeTimer = setTimeout(close, 15000);
+  toast.addEventListener('mouseenter', () => clearTimeout(autoFadeTimer));
 }
 
 function showLiveToast(ch) {

@@ -5,20 +5,36 @@ const $ = (id) => document.getElementById(id);
 
 (async function initSync() {
   const SYNC_STATUS_KEY = 'cc_sync_status';
+  const LATEST_VERSION_KEY = 'cc_latest_version';
   const statusEl = $('syncStatus');
+  const banner = $('updateBanner');
   function paintStatus(s) {
     if (!s) { statusEl.textContent = ''; return; }
     const color = s.kind === 'err' ? '#e74c3c' : s.kind === 'ok' ? '#1AE192' : s.kind === 'warn' ? '#e0a93b' : '#888';
     statusEl.style.color = color;
     statusEl.textContent = s.msg + (s.ts ? ` · ${new Date(s.ts).toLocaleTimeString()}` : '');
   }
-  const saved = await chrome.storage.local.get(SYNC_STATUS_KEY);
+  function paintUpdate(info) {
+    if (!banner) return;
+    if (info?.updateAvailable && info.version) {
+      banner.style.display = 'block';
+      banner.innerHTML = `🔔 새 버전 <b>${info.version}</b> 출시 (현재 ${info.current || '?'}) — <a href="https://github.com/chzzk-zeropepsi/chzzk-plugin/releases" target="_blank" rel="noopener" style="color:#1AE192;text-decoration:underline;">릴리즈 페이지에서 받기</a>`;
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+  const saved = await chrome.storage.local.get([SYNC_STATUS_KEY, LATEST_VERSION_KEY]);
   paintStatus(saved[SYNC_STATUS_KEY]);
+  paintUpdate(saved[LATEST_VERSION_KEY]);
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes[SYNC_STATUS_KEY]) paintStatus(changes[SYNC_STATUS_KEY].newValue);
+    if (area !== 'local') return;
+    if (changes[SYNC_STATUS_KEY]) paintStatus(changes[SYNC_STATUS_KEY].newValue);
+    if (changes[LATEST_VERSION_KEY]) paintUpdate(changes[LATEST_VERSION_KEY].newValue);
   });
   chrome.runtime.sendMessage({ type: 'cc-sync-now' });
+  chrome.runtime.sendMessage({ type: 'cc-check-version' });
 })();
+
 
 (async function initFeatureToggles() {
   const keys = ['cc_feat_followings', 'cc_feat_vertical', 'cc_feat_bookmarks', 'cc_feat_downloads'];

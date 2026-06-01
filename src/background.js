@@ -1,30 +1,32 @@
 // CHZZK Companion - background service worker
 // 알림 대상 채널의 라이브 전환(off->on) 감지 + Firebase 동기화
 
-import { syncOnce, listenAndPush } from './lib/sync.js';
+import { syncOnce, listenAndPush, checkLatestVersion } from './lib/sync.js';
 
 const ALARM_NAME = 'cc-notify-poll';
 const SYNC_ALARM = 'cc-sync-poll';
+const SUB_ALARM = 'cc-sub-poll';
 const SYNC_PERIOD_MIN = 10;
 const POLL_PERIOD_MIN = 1;
+const SUB_PERIOD_MIN = 1; // 구독 선물 폴링 주기
 const NOTIFY_KEY = 'notify_channels';
 const STATE_KEY = 'notify_states';
+const SUB_SNAPSHOT_KEY = 'cc_subscribe_snapshot';
 
-chrome.runtime.onInstalled.addListener(() => {
+function setupAlarms() {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: POLL_PERIOD_MIN });
   chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
-  syncOnce().catch(() => {});
-});
-chrome.runtime.onStartup?.addListener(() => {
-  chrome.alarms.create(ALARM_NAME, { periodInMinutes: POLL_PERIOD_MIN });
-  chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
-  syncOnce().catch(() => {});
-});
+  chrome.alarms.create(SUB_ALARM, { periodInMinutes: SUB_PERIOD_MIN });
+}
+chrome.runtime.onInstalled.addListener(() => { setupAlarms(); syncOnce().catch(() => {}); pollSubscriptions(true).catch(() => {}); });
+chrome.runtime.onStartup?.addListener(() => { setupAlarms(); syncOnce().catch(() => {}); pollSubscriptions(true).catch(() => {}); });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) pollLiveTransitions().catch(() => {});
   if (alarm.name === SYNC_ALARM) syncOnce().catch(() => {});
+  if (alarm.name === SUB_ALARM) pollSubscriptions(false).catch(() => {});
 });
+
 
 listenAndPush();
 
@@ -72,6 +74,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg?.type === 'cc-sync-now') {
     syncOnce().then((r) => sendResponse({ ok: true, r })).catch((e) => sendResponse({ error: String(e.message ?? e) }));
+    return true;
+  }
+  if (msg?.type === 'cc-check-version') {
+    checkLatestVersion().then((r) => sendResponse({ ok: true, info: r })).catch((e) => sendResponse({ error: String(e.message ?? e) }));
     return true;
   }
   if (msg?.type === 'cc-download') {
@@ -165,5 +171,41 @@ async function fireNotification(ch) {
   const tabs = await chrome.tabs.query({ url: 'https://chzzk.naver.com/*' });
   for (const t of tabs) {
     chrome.tabs.sendMessage(t.id, { type: 'cc-live-toast', channel: ch }).catch(() => {});
+  }
+}
+
+// ===== 구독 선물 알림 =====
+// /commercial/v1/subscribe/channels 응답을 폴링해서 새 선물 구독이 들어오면 chrome.notifications로 알림
+async function fetchSubscribeChannels() {
+  const r = await fetch('https://api.chzzk.naver.com/commercial/v1/subscribe/channels', { credentials: 'include', cache: 'no-store' });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return Array.isArray(j?.content) ? j.content : null;
+}
+function subKey(item) {
+  // 같은 채널 + 같은 만료일 = 같은 구독 인스턴스
+  return `${item.channelId}|${item.nextPublishYmdt || ''}|${item.tier || ''}`;
+}
+async function pollSubscriptions(initial) {
+  let list;
+  try { list = await fetchSubscribeChannels(); } catch (_) { return; }
+  if (!list) return;
+  const { [SUB_SNAPSHOT_KEY]: snap = {} } = await chrome.storage.local.get(SUB_SNAPSHOT_KEY);
+  const newSnap = {};
+  const newGifts = [];
+  for (const item of list) {
+    const k = subKey(item);
+    newSnap[k] = { channelId: item.channelId, channelName: item.channelName, isGift: !!item.isGift, tierName: item.tierName, nextPublishYmdt: item.nextPublishYmdt };
+    if (item.isGift && !snap[k]) newGifts.push(item);
+  }
+  await chrome.storage.local.set({ [SUB_SNAPSHOT_KEY]: newSnap });
+  if (initial) return; // 첫 실행은 알림 없이 baseline만 저장
+  for (const g of newGifts) await fireGiftToast(g);
+}
+
+async function fireGiftToast(g) {
+  const tabs = await chrome.tabs.query({ url: 'https://chzzk.naver.com/*' });
+  for (const t of tabs) {
+    chrome.tabs.sendMessage(t.id, { type: 'cc-gift-toast', gift: g }).catch(() => {});
   }
 }

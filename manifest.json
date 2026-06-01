@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "치지직 플러그인",
-  "version": "0.2.0",
-  "description": "치지직 보조 도구: 팔로잉 그룹화, 생방송 알림, 다시보기 북마크, 클립/다시보기 다운로드",
+  "version": "0.2.7",
+  "description": "치지직 보조 도구: 팔로잉 그룹화, 생방송 알림, 다시보기 북마크, 클립 다운로드, 다중 채널 라이브 시청",
   "permissions": ["storage", "alarms", "tabs", "downloads"],
   "host_permissions": [
     "https://chzzk.naver.com/*",
@@ -19,7 +19,17 @@
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
-  "background": { "service_worker": "src/background.js", "type": "module" },
+  "background": {
+    "service_worker": "src/background.js",
+    "scripts": ["src/background.js"],
+    "type": "module"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "chzzk-companion@local",
+      "strict_min_version": "128.0"
+    }
+  },
   "action": { "default_popup": "src/popup/popup.html", "default_icon": "icons/icon128.png" },
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "content_scripts": [
@@ -31,7 +41,7 @@
     },
     {
       "matches": ["https://chzzk.naver.com/*"],
-      "js": ["src/content/content.js", "src/content/bookmarks.js", "src/content/clips.js", "src/content/videos.js", "src/content/live_record.js", "src/content/vertical.js"],
+      "js": ["src/content/content.js", "src/content/bookmarks.js", "src/content/clips.js", "src/content/live_record.js", "src/content/vertical.js"],
       "css": ["src/content/content.css"],
       "run_at": "document_idle"
     }

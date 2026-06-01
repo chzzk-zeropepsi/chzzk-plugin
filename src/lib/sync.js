@@ -6,12 +6,29 @@ export const SYNC_AUTH_KEY = 'cc_sync_auth';
 export const SYNC_META_KEY = 'cc_sync_meta';
 export const SYNC_USER_KEY = 'cc_sync_user_id';
 export const SYNC_STATUS_KEY = 'cc_sync_status';
+export const LATEST_VERSION_KEY = 'cc_latest_version'; // { version, checkedAt }
 
 const DENY = new Set([
-  SYNC_ENABLED_KEY, SYNC_AUTH_KEY, SYNC_META_KEY, SYNC_USER_KEY, SYNC_STATUS_KEY,
+  SYNC_ENABLED_KEY, SYNC_AUTH_KEY, SYNC_META_KEY, SYNC_USER_KEY, SYNC_STATUS_KEY, LATEST_VERSION_KEY,
   'notify_states',
   'cc_active_recordings', // 탭별 ephemeral 상태
 ]);
+
+function currentVersion() {
+  try { return chrome.runtime.getManifest().version; } catch (_) { return null; }
+}
+
+// 0.2.10 > 0.2.9 식으로 의미 있게 비교
+function cmpVersion(a, b) {
+  const pa = String(a || '').split('.').map(Number);
+  const pb = String(b || '').split('.').map(Number);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
 
 function configured() {
   return FIREBASE_CONFIG?.apiKey
@@ -94,6 +111,39 @@ async function getAuth() {
 function docUrl(userId) {
   return `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents/userSettings/${encodeURIComponent(userId)}`;
 }
+function latestVersionDocUrl() {
+  return `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents/plugin-version/version`;
+}
+
+// plugin-version/version 문서에서 최신 버전 조회 → 로컬 캐시. 업데이트 권유 표시용.
+export async function checkLatestVersion() {
+  if (!configured()) { console.warn('[cc-sync] checkLatestVersion: firebase 미설정'); return null; }
+  try {
+    const auth = await getAuth();
+    const r = await fetch(latestVersionDocUrl(), { headers: { Authorization: 'Bearer ' + auth.idToken } });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      console.warn('[cc-sync] checkLatestVersion 실패:', r.status, txt.slice(0, 200));
+      return null;
+    }
+    const j = await r.json();
+    // 필드 타입에 따라 적절히 읽기
+    const f = j?.fields?.version;
+    const v = f?.stringValue ?? f?.integerValue ?? f?.doubleValue;
+    if (v == null) {
+      console.warn('[cc-sync] checkLatestVersion: version 필드 없음', j);
+      return null;
+    }
+    const cur = currentVersion();
+    const info = { version: String(v), current: cur, updateAvailable: cmpVersion(cur, String(v)) < 0, checkedAt: Date.now() };
+    console.log('[cc-sync] 버전 확인:', info);
+    await chrome.storage.local.set({ [LATEST_VERSION_KEY]: info });
+    return info;
+  } catch (e) {
+    console.warn('[cc-sync] checkLatestVersion 예외:', e);
+    return null;
+  }
+}
 
 async function pullRemote() {
   const auth = await getAuth();
@@ -116,6 +166,7 @@ async function pushRemote(data) {
     fields: {
       data: { stringValue: JSON.stringify(data) },
       updatedAt: { integerValue: String(updatedAt) },
+      version: { stringValue: currentVersion() || '' },
     },
   };
   const r = await fetch(docUrl(uid), {
@@ -169,6 +220,8 @@ export async function syncOnce() {
   } catch (e) {
     await setStatus('동기화 실패: ' + e.message, 'err');
     throw e;
+  } finally {
+    checkLatestVersion().catch(() => {});
   }
 }
 
@@ -185,6 +238,7 @@ export function listenAndPush() {
         const all = await chrome.storage.local.get(null);
         await pushRemote(collectSyncable(all));
         await setStatus(`자동 동기화 완료`, 'ok');
+        checkLatestVersion().catch(() => {});
       } catch (e) {
         await setStatus('자동 동기화 실패: ' + e.message, 'err');
       }

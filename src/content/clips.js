@@ -11,7 +11,7 @@
   // 페이지 컨텍스트에 fetch 후킹 스크립트 주입 (chzzk 페이지네이션 응답 캡처)
   try {
     const s = document.createElement('script');
-    s.src = chrome.runtime.getURL('inject_clips.js');
+    s.src = chrome.runtime.getURL('src/inject/inject_clips.js');
     s.onload = () => s.remove();
     (document.head || document.documentElement).appendChild(s);
   } catch (_) {}
