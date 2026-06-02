@@ -13,6 +13,7 @@ const PIN_KEY = 'cc_panel_pinned';
 const OPACITY_KEY = 'cc_panel_opacity';
 const ICONIZED_KEY = 'cc_panel_iconized';
 const ICON_POS_KEY = 'cc_panel_icon_pos';
+const PANEL_COLLAPSED_KEY = 'cc_panel_collapsed';
 let panelPinned = false;
 let panelOpacity = 0.97;
 let panelIconized = false;
@@ -202,6 +203,7 @@ function ensurePanel() {
   applyFavOnly();
   applyOpacity();
   applyIconized();
+  applyPanelCollapsed();
   panelEl.querySelector('.cc-fp-iconize').addEventListener('click', (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const iconSize = 44;
@@ -258,6 +260,7 @@ function ensurePanel() {
     collapsed = !collapsed;
     panelEl.classList.toggle('cc-collapsed', collapsed);
     panelEl.querySelector('.cc-fp-toggle').textContent = collapsed ? '+' : '−';
+    chrome.storage.local.set({ [PANEL_COLLAPSED_KEY]: collapsed });
   });
   enableDrag(panelEl, panelEl.querySelector('.cc-fp-header'));
   restorePos(panelEl);
@@ -372,6 +375,75 @@ function bindSearch(panel) {
     searchQuery = e.target.value;
     renderBody();
   });
+}
+
+// 팔로잉하지 않은 채널 검색 (디바운스 + 캐시)
+const externalSearchCache = new Map(); // keyword -> { list, fetchedAt }
+const EXTERNAL_SEARCH_TTL_MS = 60_000;
+let externalSearchTimer = null;
+let externalSearchSeq = 0;
+async function fetchExternalChannels(keyword) {
+  const cached = externalSearchCache.get(keyword);
+  if (cached && Date.now() - cached.fetchedAt < EXTERNAL_SEARCH_TTL_MS) return cached.list;
+  const url = `https://api.chzzk.naver.com/service/v1/search/channels?keyword=${encodeURIComponent(keyword)}&offset=0&size=20&withFirstChannelContent=false`;
+  const r = await fetch(url, { credentials: 'include', cache: 'no-store' });
+  if (!r.ok) throw new Error(`search ${r.status}`);
+  const j = await r.json();
+  const list = (j?.content?.data || []).map((d) => d.channel).filter(Boolean);
+  externalSearchCache.set(keyword, { list, fetchedAt: Date.now() });
+  return list;
+}
+function renderExternalSearchSection(body, keyword) {
+  if (!keyword || keyword.length < 2) return;
+  const myIds = new Set(cachedFollowings.map((f) => f.channelId));
+  const sectionId = 'cc-ext-search';
+  let section = body.querySelector('#' + sectionId);
+  if (!section) {
+    section = document.createElement('div');
+    section.id = sectionId;
+    section.className = 'cc-ext-search';
+    section.style.cssText = 'margin-top:8px;border-top:1px dashed #444;padding-top:6px;';
+    body.appendChild(section);
+  }
+  section.innerHTML = `<div style="font-size:11px;color:#888;padding:4px 8px;">🔎 팔로잉 외 채널 검색 중…</div>`;
+  const mySeq = ++externalSearchSeq;
+  clearTimeout(externalSearchTimer);
+  externalSearchTimer = setTimeout(async () => {
+    let list;
+    try { list = await fetchExternalChannels(keyword); }
+    catch (e) {
+      if (mySeq !== externalSearchSeq) return;
+      section.innerHTML = `<div style="font-size:11px;color:#e74c3c;padding:4px 8px;">검색 실패: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    if (mySeq !== externalSearchSeq) return;
+    const others = list.filter((c) => !myIds.has(c.channelId));
+    if (!others.length) {
+      section.innerHTML = `<div style="font-size:11px;color:#888;padding:4px 8px;">🔎 팔로잉 외 채널: 결과 없음</div>`;
+      return;
+    }
+    const rows = others.map((c) => {
+      const fc = typeof c.followerCount === 'number' ? c.followerCount.toLocaleString() : '0';
+      const liveDot = c.openLive ? '<span class="cc-live-dot" style="margin-right:4px;"></span>' : '';
+      const img = c.channelImageUrl
+        ? `<img src="${escapeHtml(c.channelImageUrl)}" onerror="this.style.display='none'">`
+        : '<span class="cc-ch-noimg"></span>';
+      return `
+        <div class="cc-ch-row ${c.openLive ? 'cc-live' : ''}" data-cid="${escapeHtml(c.channelId)}" data-cname="${escapeHtml(c.channelName)}" title="${escapeHtml(c.channelName)}">
+          <a class="cc-ch-link" href="https://chzzk.naver.com/${encodeURIComponent(c.channelId)}">
+            ${img}
+            <div class="cc-ch-text">
+              <div class="cc-ch-line1">
+                ${liveDot}<span class="cc-ch-name">${escapeHtml(c.channelName)}</span>
+                <span class="cc-live-count" style="color:#888;">팔로워 ${escapeHtml(fc)}</span>
+              </div>
+            </div>
+          </a>
+        </div>
+      `;
+    }).join('');
+    section.innerHTML = `<div style="font-size:11px;color:#888;padding:4px 8px;">🔎 팔로잉 외 채널 (${others.length})</div>${rows}`;
+  }, 350);
 }
 
 function bindViewTabs(panel) {
@@ -561,6 +633,111 @@ async function restorePos(panel) {
   if (left < 0 || top < 0 || left > window.innerWidth - 40 || top > window.innerHeight - 40) return;
   panel.style.left = pos.left; panel.style.top = pos.top;
   panel.style.right = 'auto'; panel.style.bottom = 'auto';
+}
+
+// 예측 이벤트 + 도네이션 미션 상태 캐시
+const predictionByCid = new Map();
+const missionsByCid = new Map();
+const PREDICTION_TTL_MS = 30000;
+const MISSIONS_TTL_MS = 30000;
+// ACTIVE: 진행중(참여 가능), EXPIRED: 참여 마감(결과 대기), COMPLETED: 결과 확인 완료
+function predictionState(p) {
+  if (!p || !p.status || !p.predictionId) return null;
+  const s = String(p.status).toUpperCase();
+  if (s === 'ACTIVE') return 'active';
+  if (s === 'EXPIRED') return 'expired';
+  return null; // COMPLETED 등은 표시 안 함
+}
+async function fetchPrediction(cid) {
+  try {
+    const r = await fetch(`https://api.chzzk.naver.com/service/v1/channels/${cid}/log-power/prediction`, { credentials: 'include', cache: 'no-store' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j?.content || null;
+  } catch (_) { return null; }
+}
+async function fetchMissions(cid) {
+  try {
+    const r = await fetch(`https://api.chzzk.naver.com/service/v2/channels/${cid}/donations/missions?filterStatus=APPROVED&filterStatus=EXPIRED&page=0&size=50`, { credentials: 'include', cache: 'no-store' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j?.content?.data || [];
+  } catch (_) { return null; }
+}
+async function refreshPredictionsForVisible() {
+  const rows = document.querySelectorAll('#cc-followings-panel .cc-ch-row.cc-live');
+  for (const row of rows) {
+    const cid = row.dataset.cid;
+    if (!cid) continue;
+    // 예측
+    const cachedP = predictionByCid.get(cid);
+    if (cachedP && Date.now() - cachedP.fetchedAt < PREDICTION_TTL_MS) applyPredictionBadge(row, cachedP);
+    else fetchPrediction(cid).then((p) => {
+      const info = { ...(p || {}), fetchedAt: Date.now() };
+      predictionByCid.set(cid, info);
+      applyPredictionBadge(row, info);
+    });
+    // 미션
+    const cachedM = missionsByCid.get(cid);
+    if (cachedM && Date.now() - cachedM.fetchedAt < MISSIONS_TTL_MS) applyMissionLine(row, cachedM.list);
+    else fetchMissions(cid).then((list) => {
+      const info = { list: list || [], fetchedAt: Date.now() };
+      missionsByCid.set(cid, info);
+      applyMissionLine(row, info.list);
+    });
+  }
+}
+function fmtMoney(n) {
+  if (!n) return '0';
+  if (n >= 100000000) return (n / 100000000).toFixed(1) + '억';
+  if (n >= 10000) return (n / 10000).toFixed(n >= 100000 ? 0 : 1) + '만';
+  if (n >= 1000) return Math.floor(n / 1000) + '천';
+  return String(n);
+}
+function applyMissionLine(row, list) {
+  const text = row.querySelector('.cc-ch-text');
+  if (!text) return;
+  const existing = text.querySelector('.cc-mission-line');
+  if (!list || !list.length) { if (existing) existing.remove(); return; }
+  // APPROVED 우선, 없으면 EXPIRED
+  const active = list.filter((m) => m.status === 'APPROVED');
+  const items = active.length ? active : list;
+  const first = items[0];
+  const more = items.length - 1;
+  const isActive = first.status === 'APPROVED';
+  const label = isActive ? '미션 진행중' : '미션 마감';
+  const color = isActive ? '#1AE192' : '#999';
+  const parts = [first.missionText || '(제목 없음)'];
+  if (first.totalAmount) parts.push(`${fmtMoney(first.totalAmount)}원`);
+  if (first.participationCount) parts.push(`${first.participationCount}명`);
+  const detail = parts.join(', ');
+  const moreText = more > 0 ? ` 외 ${more}` : '';
+  const svg = `<svg width="12" height="12" viewBox="0 0 32 32" fill="none" style="vertical-align:-2px;margin-right:3px;"><path d="M27.2 15.9998C27.2 22.1854 22.1856 27.1998 16 27.1998C9.8144 27.1998 4.79999 22.1854 4.79999 15.9998C4.79999 9.81422 9.8144 4.7998 16 4.7998" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M22.4 16.0001C22.4 19.5347 19.5346 22.4001 16 22.4001C12.4654 22.4001 9.59998 19.5347 9.59998 16.0001C9.59998 12.4655 12.4654 9.6001 16 9.6001" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M15.53 14.3737C15.0736 14.8542 15.093 15.6137 15.5735 16.0702C16.054 16.5267 16.8136 16.5072 17.27 16.0267L15.53 14.3737ZM17.27 16.0267L24.87 8.02669L23.13 6.3737L15.53 14.3737L17.27 16.0267Z" fill="currentColor"/><path d="M20.4938 5.99561L21.6959 9.60157C21.7437 9.74492 21.8561 9.8574 21.9995 9.90516L25.6043 11.1063C25.7768 11.1638 25.9669 11.1189 26.0955 10.9903L29.3212 7.76453C29.6009 7.48482 29.4412 7.00585 29.0496 6.94994L25.5564 6.45118C25.3452 6.42103 25.1793 6.25508 25.1491 6.04388L24.6501 2.55042C24.5941 2.15886 24.1152 1.9992 23.8355 2.27888L20.6098 5.50439C20.4812 5.63295 20.4363 5.82312 20.4938 5.99561Z" fill="currentColor"/></svg>`;
+  const html = `<span style="color:${color};font-weight:600;">${svg}${label}</span> · <span style="color:#ccc;">${escapeHtml(detail)}${escapeHtml(moreText)}</span>`;
+  if (existing) { existing.innerHTML = html; return; }
+  const div = document.createElement('div');
+  div.className = 'cc-mission-line';
+  div.style.cssText = 'font-size:11px;line-height:1.3;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  div.innerHTML = html;
+  text.appendChild(div);
+}
+function applyPredictionBadge(row, info) {
+  const text = row.querySelector('.cc-ch-text');
+  if (!text) return;
+  const state = predictionState(info);
+  const existing = text.querySelector('.cc-pred-line');
+  if (!state) { if (existing) existing.remove(); return; }
+  const meta = state === 'active'
+    ? { label: '🪵 예측 진행중', color: '#c08866' }
+    : { label: '🪵 참여 마감', color: '#c08866' };
+  const title = info.predictionTitle || '';
+  const html = `<span style="color:${meta.color};font-weight:600;">${meta.label}</span>${title ? ` · <span style="color:#ccc;">${escapeHtml(title)}</span>` : ''}`;
+  if (existing) { existing.innerHTML = html; return; }
+  const div = document.createElement('div');
+  div.className = 'cc-pred-line';
+  div.style.cssText = 'font-size:11px;line-height:1.3;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  div.innerHTML = html;
+  text.appendChild(div);
 }
 
 function channelLink(c, gid) {
@@ -926,6 +1103,10 @@ function renderBody() {
     : viewMode === 'drops' ? renderDrops(filtered)
     : viewMode === 'bytag' ? renderByTag(filtered)
     : renderGrouped(cachedGroups, filtered);
+  // 라이브 채널들의 예측 이벤트 진행 여부 비동기 표시
+  setTimeout(refreshPredictionsForVisible, 200);
+  // 검색어 있을 때 팔로잉하지 않은 채널들 비동기 검색
+  if (q) renderExternalSearchSection(body, searchQuery.trim());
   if (!body._ccScrollBound) {
     body._ccScrollBound = true;
     let scrollTimer = null;
@@ -941,7 +1122,7 @@ function renderBody() {
 }
 
 async function loadCollapsed() {
-  const obj = await chrome.storage.local.get([COLLAPSED_KEY, VIEW_KEY, NOTIFY_KEY, PIN_KEY, LIVE_ONLY_KEY, FAV_KEY, FAV_ONLY_KEY, OPACITY_KEY, ICONIZED_KEY]);
+  const obj = await chrome.storage.local.get([COLLAPSED_KEY, VIEW_KEY, NOTIFY_KEY, PIN_KEY, LIVE_ONLY_KEY, FAV_KEY, FAV_ONLY_KEY, OPACITY_KEY, ICONIZED_KEY, PANEL_COLLAPSED_KEY]);
   const arr = obj[COLLAPSED_KEY];
   if (Array.isArray(arr)) for (const id of arr) collapsedGroups.add(id);
   else { collapsedGroups.add(OTHER_KEY); collapsedGroups.add(OFFLINE_KEY); }
@@ -953,7 +1134,15 @@ async function loadCollapsed() {
   if (obj[FAV_ONLY_KEY] === true) favOnly = true;
   if (typeof obj[OPACITY_KEY] === 'number') panelOpacity = Math.max(0.2, Math.min(1, obj[OPACITY_KEY]));
   if (obj[ICONIZED_KEY] === true) panelIconized = true;
+  if (obj[PANEL_COLLAPSED_KEY] === true) collapsed = true;
   if (panelEl) applyIconized();
+}
+
+function applyPanelCollapsed() {
+  if (!panelEl) return;
+  panelEl.classList.toggle('cc-collapsed', collapsed);
+  const btn = panelEl.querySelector('.cc-fp-toggle');
+  if (btn) btn.textContent = collapsed ? '+' : '−';
 }
 
 function saveCollapsed() {
