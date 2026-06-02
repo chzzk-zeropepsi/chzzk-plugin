@@ -44,6 +44,7 @@ let cachedGroups = [];
 const watchParties = new Map(); // channelId -> { no, tag, type, drops }
 const liveTags = new Map(); // channelId -> string[]
 let addingTo = null; // null | 'root' | groupId
+let skipNextGroupsRefresh = false; // 부분 갱신 후 자기 자신의 storage.onChanged 무시
 
 window.addEventListener('message', (e) => {
   if (e.source !== window) return;
@@ -526,6 +527,8 @@ function bindChannelDnD(panel) {
       const { cid, fromGid } = JSON.parse(chData);
       const toGid = groupEl.dataset.gid;
       if (fromGid === toGid) return;
+      const ok = viewMode === 'custom' && await partialChannelMove(cid, fromGid, toGid);
+      if (ok) return;
       const groups = await readGroups();
       for (const g of groups) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
       if (toGid !== OTHER_KEY) {
@@ -577,6 +580,111 @@ function bindChannelDnD(panel) {
       refresh();
     }
   });
+}
+
+function cssEsc(s) { return (s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
+
+function sortChannelsCompare(a, b) {
+  return (favoriteChannels.has(b.channelId) ? 1 : 0) - (favoriteChannels.has(a.channelId) ? 1 : 0)
+      || (b.openLive ? 1 : 0) - (a.openLive ? 1 : 0)
+      || (b.concurrentUserCount || 0) - (a.concurrentUserCount || 0)
+      || a.channelName.localeCompare(b.channelName);
+}
+
+function recomputeGroupCounts(panel) {
+  const byId = new Map(cachedFollowings.map((f) => [f.channelId, f]));
+  const childrenMap = new Map();
+  for (const g of cachedGroups) {
+    const p = g.parentId || null;
+    if (!childrenMap.has(p)) childrenMap.set(p, []);
+    childrenMap.get(p).push(g);
+  }
+  const live = (g) => (g.channelIds || []).map((id) => byId.get(id)).filter((c) => c && c.openLive).length
+    + (childrenMap.get(g.id) || []).reduce((s, c) => s + live(c), 0);
+  const total = (g) => (g.channelIds || []).filter((id) => byId.has(id)).length
+    + (childrenMap.get(g.id) || []).reduce((s, c) => s + total(c), 0);
+  for (const g of cachedGroups) {
+    const head = panel.querySelector(`.cc-group[data-gid="${cssEsc(g.id)}"] > .cc-group-head`);
+    const countEl = head?.querySelector('.cc-group-count');
+    if (countEl) countEl.textContent = `${live(g)} / ${total(g)}`;
+  }
+  const assigned = new Set();
+  for (const g of cachedGroups) for (const id of g.channelIds || []) assigned.add(id);
+  const others = cachedFollowings.filter((f) => !assigned.has(f.channelId));
+  const otherCount = panel.querySelector(`.cc-group[data-gid="${cssEsc(OTHER_KEY)}"] > .cc-group-head > .cc-group-count`);
+  if (otherCount) otherCount.textContent = `${others.filter((c) => c.openLive).length} / ${others.length}`;
+}
+
+async function partialChannelMove(cid, fromGid, toGid) {
+  const panel = panelEl;
+  if (!panel) return false;
+  const body = panel.querySelector('.cc-fp-body');
+  if (!body) return false;
+  const ch = cachedFollowings.find((f) => f.channelId === cid);
+  if (!ch) return false;
+
+  // 목적지 group-body 확보 (없으면 부분 갱신 포기)
+  const destSel = `.cc-group[data-gid="${cssEsc(toGid)}"] > .cc-group-body`;
+  const destBody = body.querySelector(destSel);
+  if (!destBody) return false;
+
+  // 메모리/스토리지 업데이트
+  for (const g of cachedGroups) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
+  if (toGid !== OTHER_KEY) {
+    const target = cachedGroups.find((g) => g.id === toGid);
+    if (!target) return false;
+    target.channelIds.push(cid);
+  }
+  skipNextGroupsRefresh = true;
+  await chrome.storage.local.set({ [GROUPS_KEY]: cachedGroups });
+
+  // 기존 row 제거
+  body.querySelectorAll(`.cc-ch-row[data-cid="${cssEsc(cid)}"]`).forEach((el) => el.remove());
+
+  // 목적지 정렬 순서 계산
+  let destCids;
+  if (toGid === OTHER_KEY) {
+    const assigned = new Set();
+    for (const g of cachedGroups) for (const id of g.channelIds || []) assigned.add(id);
+    destCids = cachedFollowings.filter((f) => !assigned.has(f.channelId)).map((f) => f.channelId);
+  } else {
+    destCids = cachedGroups.find((g) => g.id === toGid)?.channelIds || [];
+  }
+  const destSorted = destCids.map((id) => cachedFollowings.find((f) => f.channelId === id)).filter(Boolean).sort(sortChannelsCompare);
+  const insertIndex = destSorted.findIndex((c) => c.channelId === cid);
+
+  // "채널 없음" placeholder 제거
+  destBody.querySelector(':scope > .cc-empty')?.remove();
+
+  // 신규 row 생성 & 삽입
+  const tmp = document.createElement('div');
+  tmp.innerHTML = channelLink(ch, toGid).trim();
+  const newRow = tmp.firstElementChild;
+  const existingRows = [...destBody.children].filter((el) => el.classList?.contains('cc-ch-row'));
+  if (insertIndex >= existingRows.length || insertIndex < 0) {
+    const firstNonRow = [...destBody.children].find((el) => !el.classList?.contains('cc-ch-row'));
+    if (firstNonRow) destBody.insertBefore(newRow, firstNonRow);
+    else destBody.appendChild(newRow);
+  } else {
+    destBody.insertBefore(newRow, existingRows[insertIndex]);
+  }
+
+  // 출발지 그룹이 비었으면 placeholder 표시
+  if (fromGid && fromGid !== OTHER_KEY) {
+    const srcBody = body.querySelector(`.cc-group[data-gid="${cssEsc(fromGid)}"] > .cc-group-body`);
+    if (srcBody) {
+      const hasRows = [...srcBody.children].some((el) => el.classList?.contains('cc-ch-row'));
+      const hasSub = [...srcBody.children].some((el) => el.classList?.contains('cc-group'));
+      const hasForm = !!srcBody.querySelector(':scope > .cc-group-add-input');
+      if (!hasRows && !hasSub && !hasForm && !srcBody.querySelector(':scope > .cc-empty')) {
+        srcBody.insertAdjacentHTML('beforeend', '<div class="cc-empty">채널 없음</div>');
+      }
+    }
+  }
+
+  recomputeGroupCounts(panel);
+  if (ch.openLive) setTimeout(refreshPredictionsForVisible, 100);
+  return true;
 }
 
 function enableDrag(panel, handle) {
@@ -1163,15 +1271,27 @@ function openChannelCtxMenu(x, y, cid, cname, fromGid) {
   const isFav = favoriteChannels.has(cid);
   const isNotify = notifyChannels.has(cid);
   const inGroup = fromGid && fromGid !== OTHER_KEY;
+  const moveTargets = cachedGroups
+    .filter((g) => g.id !== fromGid)
+    .sort((a, b) => (a.parentId || '').localeCompare(b.parentId || '') || (a.order || 0) - (b.order || 0));
   const items = [
     { act: 'fav-toggle', label: isFav ? '⚡ 즐겨찾기 해제' : '⚡ 즐겨찾기' },
     { act: 'notify-toggle', label: isNotify ? '🔔 알림 해제' : '🔕 알림 받기' },
     inGroup ? { act: 'remove-from-group', label: '↩ 이 그룹에서 제거', cls: 'cc-ctx-warn' } : null,
+    ...(moveTargets.length ? [{ sep: true }, { header: '📁 그룹으로 이동' },
+      ...moveTargets.map((g) => ({ act: 'move-to-group', gid: g.id, label: `  ${g.name}`, color: g.color || '#1AE192' }))] : []),
+    { sep: true },
     { act: 'unfollow', label: '✕ 팔로우 취소', cls: 'cc-ctx-danger' },
   ].filter(Boolean);
   ctxMenuEl = document.createElement('div');
   ctxMenuEl.id = 'cc-ctx-menu';
-  ctxMenuEl.innerHTML = items.map((it) => `<button data-act="${it.act}" class="${it.cls || ''}">${it.label}</button>`).join('');
+  ctxMenuEl.innerHTML = items.map((it) => {
+    if (it.sep) return '<div class="cc-ctx-sep"></div>';
+    if (it.header) return `<div class="cc-ctx-header">${escapeHtml(it.header)}</div>`;
+    const dot = it.color ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeHtml(it.color)};margin-right:6px;vertical-align:middle;"></span>` : '';
+    const gidAttr = it.gid ? ` data-gid="${escapeHtml(it.gid)}"` : '';
+    return `<button data-act="${it.act}"${gidAttr} class="${it.cls || ''}">${dot}${escapeHtml(it.label)}</button>`;
+  }).join('');
   ctxMenuEl.style.left = x + 'px';
   ctxMenuEl.style.top = y + 'px';
   document.body.appendChild(ctxMenuEl);
@@ -1194,7 +1314,20 @@ function openChannelCtxMenu(x, y, cid, cname, fromGid) {
       await chrome.storage.local.set({ [NOTIFY_KEY]: [...notifyChannels] });
       chrome.runtime.sendMessage({ type: wasOn ? 'clearState' : 'seedState', channelId: cid });
       renderBody();
+    } else if (act === 'move-to-group') {
+      const toGid = btn.dataset.gid;
+      if (!toGid || toGid === fromGid) return;
+      const ok = viewMode === 'custom' && await partialChannelMove(cid, fromGid || OTHER_KEY, toGid);
+      if (ok) return;
+      const groups = await readGroups();
+      for (const g of groups) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
+      const target = groups.find((g) => g.id === toGid);
+      if (target) target.channelIds.push(cid);
+      await chrome.storage.local.set({ [GROUPS_KEY]: groups });
+      refresh();
     } else if (act === 'remove-from-group') {
+      const ok = viewMode === 'custom' && await partialChannelMove(cid, fromGid, OTHER_KEY);
+      if (ok) return;
       const groups = await readGroups();
       const g = groups.find((x) => x.id === fromGid);
       if (g) g.channelIds = (g.channelIds || []).filter((x) => x !== cid);
@@ -1365,7 +1498,10 @@ function bindGroupToggle(panel) {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes[GROUPS_KEY]) refresh();
+  if (changes[GROUPS_KEY]) {
+    if (skipNextGroupsRefresh) { skipNextGroupsRefresh = false; }
+    else refresh();
+  }
   if (changes[NOTIFY_KEY]) {
     notifyChannels = new Set(Array.isArray(changes[NOTIFY_KEY].newValue) ? changes[NOTIFY_KEY].newValue : []);
     renderBody();

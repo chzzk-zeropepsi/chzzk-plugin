@@ -326,6 +326,9 @@ a:hover > .cc-vod-dl-overlay { opacity: 1; }
 #cc-ctx-menu button:hover { background: rgba(26,225,146,0.18); color: #1AE192; }
 #cc-ctx-menu .cc-ctx-warn:hover { background: rgba(224,169,59,0.18); color: #e0a93b; }
 #cc-ctx-menu .cc-ctx-danger:hover { background: rgba(224,69,69,0.18); color: #e04545; }
+#cc-ctx-menu .cc-ctx-sep { height: 1px; background: #333; margin: 4px 0; }
+#cc-ctx-menu .cc-ctx-header { padding: 4px 14px; font-size: 11px; color: #888; }
+#cc-ctx-menu { max-height: 70vh; overflow-y: auto; }
 
 #cc-followings-panel .cc-group-add-input {
   display: flex; gap: 4px; padding: 6px 8px;
