@@ -80,14 +80,18 @@
           buildAutoTemplate();
           return;
         }
-        // 새 채팅 메시지 (cmd 93101: bdy가 array)
+        // 새 채팅 메시지 (cmd 93101: 실시간) + 히스토리 (cmd 10100 등: 초기 백로그)
+        // 둘 다 bdy가 array고, 항목 스키마가 약간씩 다를 수 있어 필드명 두루 허용
         if (Array.isArray(obj?.bdy)) {
           for (const item of obj.bdy) {
-            if (typeof item?.msg === 'string' && item?.uid) {
+            const msg = item?.msg ?? item?.content ?? item?.message;
+            const uid = item?.uid ?? item?.userId ?? item?.userIdHash;
+            if (typeof msg === 'string' && uid) {
               lastIncomingTs = Date.now();
               for (const cb of incomingListeners) {
                 try { cb(item); } catch (_) {}
               }
+              notify({ source: 'cc-chat-incoming', cid: streamingChannelIdFromUrl() || chatCid, item });
             }
           }
         }
@@ -143,6 +147,18 @@
               }
               lastChatTemplate = obj;
               if (typeof obj.tid === 'number') tidCounter = Math.max(tidCounter, obj.tid + 1);
+              // 내 송신 메시지 누적 (echo 안 오는 경우 대비, 오면 dedupe로 통합)
+              notify({
+                source: 'cc-chat-incoming',
+                cid: streamingChannelIdFromUrl() || obj.cid || chatCid,
+                item: {
+                  msg: obj.bdy.msg,
+                  uid: chatUid || '',
+                  msgTime: Date.now(),
+                  extras: obj.bdy.extras,
+                  _outgoing: true,
+                },
+              });
             }
           } catch (_) {}
         }

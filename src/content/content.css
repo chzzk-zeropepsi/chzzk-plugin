@@ -30,7 +30,11 @@
 #cc-followings-panel .cc-fp-row1,
 #cc-followings-panel .cc-fp-row2 { display: flex; align-items: center; gap: 6px; }
 #cc-followings-panel .cc-fp-row1 > span { flex: 0 0 auto; }
-#cc-followings-panel .cc-fp-tabs { display: flex; gap: 2px; width: 100%; }
+#cc-followings-panel .cc-fp-tabs { display: flex; gap: 2px; width: 100%; flex-wrap: nowrap; overflow: hidden; }
+#cc-followings-panel .cc-fp-tab > .cc-fp-tab-emoji { margin-right: 3px; }
+#cc-followings-panel .cc-fp-tabs.cc-tabs-iconly .cc-fp-tab-label { display: none; }
+#cc-followings-panel .cc-fp-tabs.cc-tabs-iconly .cc-fp-tab-emoji { margin-right: 0; }
+#cc-followings-panel .cc-fp-tab-more { flex: 0 0 auto; min-width: 24px; }
 #cc-followings-panel .cc-fp-row1 > .cc-fp-pin { margin-left: auto; }
 #cc-followings-panel .cc-fp-row2 { flex-wrap: wrap; }
 #cc-followings-panel .cc-fp-tab {
@@ -66,12 +70,15 @@
 #cc-followings-panel .cc-group { margin-bottom: 8px; }
 #cc-followings-panel .cc-group-head {
   display: flex; align-items: center; gap: 6px;
-  padding: 4px 8px; font-size: 11px; color: #ccc;
+  padding: 4px 8px; font-size: 11px; color: #111; font-weight: 700;
   border-left: 3px solid var(--cc-c, #1AE192);
-  background: rgba(255,255,255,0.03);
+  background: var(--cc-c, #1AE192);
   cursor: pointer; user-select: none;
+  position: sticky; top: 0; z-index: 5;
 }
-#cc-followings-panel .cc-group-head:hover { background: rgba(255,255,255,0.07); }
+#cc-followings-panel .cc-group-head .cc-group-count,
+#cc-followings-panel .cc-group-head .cc-caret { color: #111; }
+#cc-followings-panel .cc-group-head:hover { filter: brightness(1.1); }
 #cc-followings-panel .cc-caret { font-size: 8px; color: #888; width: 8px; flex-shrink: 0; }
 #cc-followings-panel .cc-group-collapsed .cc-group-body { display: none; }
 #cc-followings-panel .cc-group-swatch {
@@ -282,7 +289,6 @@ a:hover > .cc-vod-dl-overlay { opacity: 1; }
 }
 
 #cc-followings-panel .cc-fp-add-group { font-size: 11px !important; }
-#cc-followings-panel .cc-group-head { position: relative; }
 #cc-followings-panel .cc-group-head { cursor: grab; }
 #cc-followings-panel .cc-group.cc-dragging { opacity: 0.4; }
 #cc-followings-panel .cc-group-add-child,

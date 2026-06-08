@@ -11,25 +11,25 @@ async function writeBookmarks(data) {
   await chrome.storage.local.set({ [BM_KEY]: data });
 }
 
+async function safeFetchJson(url) {
+  try {
+    const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j?.content || null;
+  } catch (_) { return null; }
+}
+
 async function liveStatus(channelId) {
-  const res = await fetch(`https://api.chzzk.naver.com/polling/v2/channels/${encodeURIComponent(channelId)}/live-status`, { credentials: 'include', cache: 'no-store' });
-  if (!res.ok) return null;
-  const j = await res.json();
-  return j?.content || null;
+  return safeFetchJson(`https://api.chzzk.naver.com/polling/v2/channels/${encodeURIComponent(channelId)}/live-status`);
 }
 
 async function channelMeta(channelId) {
-  const res = await fetch(`https://api.chzzk.naver.com/service/v1/channels/${encodeURIComponent(channelId)}`, { credentials: 'include', cache: 'no-store' });
-  if (!res.ok) return null;
-  const j = await res.json();
-  return j?.content || null;
+  return safeFetchJson(`https://api.chzzk.naver.com/service/v1/channels/${encodeURIComponent(channelId)}`);
 }
 
 async function videoInfo(videoNo) {
-  const res = await fetch(`https://api.chzzk.naver.com/service/v1/videos/${encodeURIComponent(videoNo)}`, { credentials: 'include', cache: 'no-store' });
-  if (!res.ok) return null;
-  const j = await res.json();
-  return j?.content || null;
+  return safeFetchJson(`https://api.chzzk.naver.com/service/v1/videos/${encodeURIComponent(videoNo)}`);
 }
 
 function pathMatch(re) { return location.pathname.match(re); }

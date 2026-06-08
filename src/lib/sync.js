@@ -8,10 +8,15 @@ export const SYNC_USER_KEY = 'cc_sync_user_id';
 export const SYNC_STATUS_KEY = 'cc_sync_status';
 export const LATEST_VERSION_KEY = 'cc_latest_version'; // { version, checkedAt }
 
-const DENY = new Set([
-  SYNC_ENABLED_KEY, SYNC_AUTH_KEY, SYNC_META_KEY, SYNC_USER_KEY, SYNC_STATUS_KEY, LATEST_VERSION_KEY,
-  'notify_states',
-  'cc_active_recordings', // 탭별 ephemeral 상태
+// 동기화 대상: 본질적 사용자 데이터만 (allowlist 방식)
+// 여기 없는 모든 키는 기기별 로컬 상태로 간주하고 동기화하지 않음.
+const ALLOW = new Set([
+  'groups',             // 사용자가 만든 그룹
+  'bookmarks',          // 다시보기 북마크
+  'notify_channels',    // 알림 받는 채널 ID 목록
+  'favorite_channels',  // 즐겨찾기 채널 ID 목록
+  'cc_view_mode',       // 기본 뷰 모드
+  'cc_vertical_mode',   // 세로 채팅 모드
 ]);
 
 function currentVersion() {
@@ -181,7 +186,7 @@ async function pushRemote(data) {
 
 function collectSyncable(all) {
   const out = {};
-  for (const [k, v] of Object.entries(all)) if (!DENY.has(k)) out[k] = v;
+  for (const [k, v] of Object.entries(all)) if (ALLOW.has(k)) out[k] = v;
   return out;
 }
 
@@ -201,10 +206,11 @@ export async function syncOnce() {
     }
     if (remoteUpdatedAt > localUpdatedAt) {
       const rawRemote = remote.data || {};
-      // DENY 키는 원격에서 가져오지 않음 (이전 버그로 인한 stale data 차단)
+      // ALLOW 키만 원격에서 가져옴 (그 외 키는 무시)
       const remoteData = {};
-      for (const [k, v] of Object.entries(rawRemote)) if (!DENY.has(k)) remoteData[k] = v;
-      const toRemove = Object.keys(all).filter((k) => !DENY.has(k) && !(k in remoteData));
+      for (const [k, v] of Object.entries(rawRemote)) if (ALLOW.has(k)) remoteData[k] = v;
+      // 로컬에서 제거할 키: ALLOW 대상이면서 원격에 없는 것 (기기별 상태는 절대 건드리지 않음)
+      const toRemove = Object.keys(all).filter((k) => ALLOW.has(k) && !(k in remoteData));
       if (toRemove.length) await chrome.storage.local.remove(toRemove);
       await chrome.storage.local.set({ ...remoteData, [SYNC_META_KEY]: { updatedAt: remoteUpdatedAt, lastPulledAt: Date.now() } });
       await setStatus(`서버 → 로컬 적용 (${new Date(remoteUpdatedAt).toLocaleString()})`, 'ok');
@@ -230,7 +236,7 @@ export function listenAndPush() {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     const keys = Object.keys(changes);
-    if (keys.every((k) => DENY.has(k))) return;
+    if (!keys.some((k) => ALLOW.has(k))) return;
     clearTimeout(pushTimer);
     pushTimer = setTimeout(async () => {
       if (!configured()) return;

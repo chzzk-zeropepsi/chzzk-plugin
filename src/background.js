@@ -81,7 +81,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg?.type === 'cc-download') {
-    chrome.downloads.download({ url: msg.url, filename: msg.filename, saveAs: false })
+    chrome.downloads.download({
+      url: msg.url,
+      filename: msg.filename,
+      saveAs: false,
+      conflictAction: msg.conflictAction || 'uniquify',
+    })
       .then((id) => sendResponse({ ok: true, id }))
       .catch((e) => sendResponse({ error: String(e.message ?? e) }));
     return true;
