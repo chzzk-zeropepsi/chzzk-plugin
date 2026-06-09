@@ -18,7 +18,11 @@
   let autoTemplate = null;     // 우선순위 2: 자동 구축 템플릿
   let tidCounter = 100;
 
-  function notify(data) { try { window.postMessage(data, '*'); } catch (_) {} }
+  function notify(data) {
+    try { window.postMessage(data, '*'); } catch (_) {}
+    // iframe 안에서 실행 중이면 부모(top)에도 전달
+    try { if (window.parent && window.parent !== window) window.parent.postMessage(data, '*'); } catch (_) {}
+  }
 
   function streamingChannelIdFromUrl() {
     const m = location.pathname.match(/\/live\/([^/?#]+)/);

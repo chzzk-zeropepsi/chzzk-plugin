@@ -122,6 +122,40 @@
     }
     return false;
   }
+  // 다중시청 활성 cid 영속화 (페이지 이동/새로고침 시 복원)
+  const ACTIVE_MULTI_KEY = 'cc_active_multi';
+  const MULTI_POS_KEY = 'cc_cp2_pos'; // { cid: {left, top, width, height} }
+  async function saveActiveMulti() {
+    const cids = [...document.querySelectorAll('[id^="cc-cp2-overlay-"]')]
+      .map((el) => el.id.replace('cc-cp2-overlay-', ''));
+    try { await chrome.storage.local.set({ [ACTIVE_MULTI_KEY]: cids }); } catch (_) {}
+  }
+  async function loadOverlayPos(cid) {
+    try {
+      const obj = await chrome.storage.local.get(MULTI_POS_KEY);
+      return obj[MULTI_POS_KEY]?.[cid] || null;
+    } catch (_) { return null; }
+  }
+  async function saveOverlayPos(cid, overlay) {
+    try {
+      const obj = await chrome.storage.local.get(MULTI_POS_KEY);
+      const all = obj[MULTI_POS_KEY] || {};
+      const rect = overlay.getBoundingClientRect();
+      all[cid] = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+      await chrome.storage.local.set({ [MULTI_POS_KEY]: all });
+    } catch (_) {}
+  }
+  async function restoreActiveMulti() {
+    try {
+      const obj = await chrome.storage.local.get(ACTIVE_MULTI_KEY);
+      const cids = Array.isArray(obj[ACTIVE_MULTI_KEY]) ? obj[ACTIVE_MULTI_KEY] : [];
+      const curLive = liveCid();
+      for (const cid of cids) {
+        if (cid && cid !== curLive) openSecondaryPanel(cid);
+      }
+    } catch (_) {}
+  }
+
   // chzzk 본 페이지를 iframe으로 띄움 — player + chat + UI 그대로
   async function openSecondaryPanel(cid) {
     const existId = 'cc-cp2-overlay-' + cid;
@@ -144,6 +178,7 @@
         <span class="cc-cp2-channel" style="color:#1AE192;font-weight:700;font-size:11px;">📺 ${cid.slice(0,8)}…</span>
         <div style="display:flex;gap:6px;">
           <button class="cc-cp2-chat" title="채팅 토글" style="background:transparent;border:1px solid #555;color:#ccc;border-radius:3px;padding:3px 6px;cursor:pointer;font-size:11px;">💬</button>
+          <button class="cc-cp2-chat-pos" title="채팅 위치 (오른쪽 ↔ 아래)" style="background:transparent;border:1px solid #555;color:#ccc;border-radius:3px;padding:3px 6px;cursor:pointer;font-size:11px;">⇄</button>
           <button class="cc-cp2-pip" title="PiP (브라우저 분리)" style="background:transparent;border:1px solid #555;color:#ccc;border-radius:3px;padding:3px 6px;cursor:pointer;font-size:11px;">⧉</button>
           <button class="cc-cp2-close" style="background:#e04545;color:#fff;border:none;border-radius:3px;padding:3px 8px;cursor:pointer;font-size:10px;">✕</button>
         </div>
@@ -154,8 +189,8 @@
           <div class="cc-cp2-status" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#888;font-size:12px;pointer-events:none;">로딩 중…</div>
           <iframe class="cc-cp2-iframe" src="https://chzzk.naver.com/live/${encodeURIComponent(cid)}" style="position:absolute;left:-99999px;top:0;width:640px;height:360px;border:none;pointer-events:none;" allow="autoplay; encrypted-media"></iframe>
         </div>
-        <div class="cc-cp2-chat-wrap" style="display:none;flex-direction:column;width:340px;flex-shrink:0;border-left:1px solid #333;background:#0f0f12;min-height:0;resize:horizontal;overflow:auto;min-width:240px;max-width:600px;">
-          <iframe class="cc-cp2-chat-iframe" style="flex:1;width:100%;border:none;background:#0f0f12;display:block;min-height:0;"></iframe>
+        <div class="cc-cp2-chat-wrap" style="display:none;flex-direction:column;width:340px;flex-shrink:0;border-left:1px solid #333;background:#0f0f12;min-height:0;resize:horizontal;overflow:hidden;min-width:240px;max-width:600px;">
+          <div class="cc-cp2-chat-msgs" style="flex:1;overflow-y:auto;padding:6px 8px;color:#eee;font-size:12px;line-height:1.4;"></div>
         </div>
       </div>
       <div class="cc-cp2-ctrl" style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#1a1a1a;flex-shrink:0;border-top:1px solid #333;">
@@ -165,9 +200,29 @@
       </div>
     `;
     document.body.appendChild(overlay);
-    enableOverlayDrag(overlay, overlay.querySelector('.cc-cp2-head'));
+    saveActiveMulti();
+    // 저장된 위치/크기 복원
+    loadOverlayPos(cid).then((pos) => {
+      if (!pos) return;
+      const maxL = window.innerWidth - 60, maxT = window.innerHeight - 60;
+      const left = Math.max(0, Math.min(maxL, pos.left));
+      const top = Math.max(0, Math.min(maxT, pos.top));
+      overlay.style.left = left + 'px';
+      overlay.style.top = top + 'px';
+      overlay.style.right = 'auto';
+      overlay.style.bottom = 'auto';
+      if (pos.width) overlay.style.width = pos.width + 'px';
+      if (pos.height) overlay.style.height = pos.height + 'px';
+    });
+    enableOverlayDrag(overlay, overlay.querySelector('.cc-cp2-head'), () => saveOverlayPos(cid, overlay));
+    // resize 추적
+    let resizeTimer = null;
+    new ResizeObserver(() => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => saveOverlayPos(cid, overlay), 400);
+    }).observe(overlay);
     let syncIv = null;
-    overlay.querySelector('.cc-cp2-close').addEventListener('click', () => { if (syncIv) clearInterval(syncIv); overlay.remove(); });
+    overlay.querySelector('.cc-cp2-close').addEventListener('click', () => { if (syncIv) clearInterval(syncIv); overlay.remove(); saveActiveMulti(); });
 
     const iframe = overlay.querySelector('.cc-cp2-iframe');
     const playBtn = overlay.querySelector('.cc-cp2-play');
@@ -182,43 +237,173 @@
       catch (e) { console.warn('[cc-cp2] PiP fail', e); }
     });
     const chatBtn = overlay.querySelector('.cc-cp2-chat');
+    const chatPosBtn = overlay.querySelector('.cc-cp2-chat-pos');
     const chatWrap = overlay.querySelector('.cc-cp2-chat-wrap');
-    const chatFrame = overlay.querySelector('.cc-cp2-chat-iframe');
-    // 채팅 iframe에 주입할 컴팩트 CSS
-    function injectChatCompactCss() {
-      try {
-        const doc = chatFrame.contentDocument;
-        if (!doc) return false;
-        if (doc.getElementById('cc-cp2-chat-compact')) return true;
-        const css = doc.createElement('style');
-        css.id = 'cc-cp2-chat-compact';
-        css.textContent = `
-          html, body { width:100% !important; height:100% !important; margin:0 !important; padding:0 !important; background:#0f0f12 !important; overflow:hidden !important; }
-          body > * { height:100% !important; }
-        `;
-        doc.head.appendChild(css);
-        return true;
-      } catch (_) { return false; }
-    }
-
-    chatBtn.addEventListener('click', () => {
-      const willOpen = chatWrap.style.display === 'none';
-      chatWrap.style.display = willOpen ? 'flex' : 'none';
-      chatBtn.style.background = willOpen ? '#1AE192' : 'transparent';
-      chatBtn.style.color = willOpen ? '#111' : '#ccc';
-      if (willOpen && !chatFrame.src) {
-        chatFrame.src = `https://chzzk.naver.com/live/${encodeURIComponent(cid)}/chat`;
-        chatFrame.addEventListener('load', () => {
-          // SPA가 DOM을 갱신해도 다시 주입되도록 주기적으로 시도
-          let tries = 0;
-          const t = setInterval(() => { injectChatCompactCss(); if (++tries > 30) clearInterval(t); }, 500);
-        });
+    const chatMsgs = overlay.querySelector('.cc-cp2-chat-msgs');
+    const mainEl = overlay.querySelector('.cc-cp2-main');
+    const bodyEl = overlay.querySelector('.cc-cp2-body');
+    // 채팅 위치 (가로/세로) + 열림 여부
+    let chatLayout = 'right';
+    let chatVisible = false;
+    try {
+      const obj = await chrome.storage.local.get(['cc_cp2_chat_layout', 'cc_cp2_chat_open']);
+      if (obj.cc_cp2_chat_layout === 'bottom') chatLayout = 'bottom';
+      if (obj.cc_cp2_chat_open && typeof obj.cc_cp2_chat_open === 'object') {
+        chatVisible = !!obj.cc_cp2_chat_open[cid];
       }
-      if (willOpen) {
-        const cur = overlay.getBoundingClientRect().width;
-        if (cur < 700) overlay.style.width = '820px';
+    } catch (_) {}
+    function applyChatLayout() {
+      // 채팅 닫혀있으면 영상이 전체 공간 차지, 그 외 사이즈 캡 제거
+      if (!chatVisible) {
+        chatWrap.style.display = 'none';
+        mainEl.style.flexDirection = 'row';
+        mainEl.style.overflow = '';
+        bodyEl.style.flex = '1';
+        bodyEl.style.width = '';
+        bodyEl.style.aspectRatio = '';
+        bodyEl.style.height = '';
+        bodyEl.style.maxHeight = '';
+        bodyEl.style.minHeight = '';
+        return;
+      }
+      chatWrap.style.display = 'flex';
+      if (chatLayout === 'bottom') {
+        mainEl.style.flexDirection = 'column';
+        mainEl.style.overflow = 'hidden';
+        // 영상 영역: 16:9 비율 유지 + 절대 채팅 위로 침범하지 못하게 max-height로 캡
+        bodyEl.style.flex = '0 1 auto';
+        bodyEl.style.width = '100%';
+        bodyEl.style.aspectRatio = '16 / 9';
+        bodyEl.style.height = 'auto';
+        bodyEl.style.maxHeight = 'calc(100% - 120px)';
+        bodyEl.style.minHeight = '0';
+        // 채팅 영역: 남는 공간 전부 + 최소 보장
+        chatWrap.style.borderLeft = 'none';
+        chatWrap.style.borderTop = '1px solid #333';
+        chatWrap.style.width = '100%';
+        chatWrap.style.height = 'auto';
+        chatWrap.style.flex = '1 1 auto';
+        chatWrap.style.maxWidth = 'none';
+        chatWrap.style.maxHeight = '';
+        chatWrap.style.minWidth = '0';
+        chatWrap.style.minHeight = '120px';
+        chatWrap.style.resize = 'none';
+        const cur = overlay.getBoundingClientRect().height;
+        if (cur < 520) overlay.style.height = '520px';
+      } else {
+        mainEl.style.flexDirection = 'row';
+        mainEl.style.overflow = '';
+        bodyEl.style.flex = '1';
+        bodyEl.style.width = '';
+        bodyEl.style.aspectRatio = '';
+        bodyEl.style.height = '';
+        bodyEl.style.maxHeight = '';
+        bodyEl.style.minHeight = '';
+        chatWrap.style.borderLeft = '1px solid #333';
+        chatWrap.style.borderTop = 'none';
+        chatWrap.style.width = '340px';
+        chatWrap.style.height = '';
+        chatWrap.style.flex = '0 0 auto';
+        chatWrap.style.maxWidth = '600px';
+        chatWrap.style.maxHeight = '';
+        chatWrap.style.minWidth = '240px';
+        chatWrap.style.minHeight = '0';
+        chatWrap.style.resize = 'horizontal';
+      }
+    }
+    applyChatLayout();
+    chatPosBtn.addEventListener('click', () => {
+      chatLayout = chatLayout === 'right' ? 'bottom' : 'right';
+      applyChatLayout();
+      chrome.storage.local.set({ cc_cp2_chat_layout: chatLayout }).catch(() => {});
+    });
+    // ===== 커스텀 채팅 UI: 메인 iframe의 chat WS를 hook해서 직접 렌더/전송 =====
+    const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let chatCatalog = null;
+    fetch(`https://api.chzzk.naver.com/service/v1/channels/${cid}/emoji-packs`, { credentials: 'include' })
+      .then((r) => r.json()).then((j) => {
+        const c = j?.content || {};
+        const map = {};
+        const collect = (packs) => { if (!Array.isArray(packs)) return; for (const p of packs) for (const e of (p.emojis || [])) if (e.emojiId && e.imageUrl) map[e.emojiId] = e.imageUrl; };
+        collect(c.emojiPacks); collect(c.cheatKeyEmojiPacks); collect(c.subscriptionEmojiPacks);
+        chatCatalog = map;
+      }).catch(() => {});
+    function renderChatMsg(text, emojis) {
+      const re = /\{:([^:}\s]+):\}/g;
+      const parts = []; let last = 0, m;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index > last) parts.push({ t: 'text', v: text.slice(last, m.index) });
+        const url = (emojis && emojis[m[1]]) || (chatCatalog && chatCatalog[m[1]]) || null;
+        parts.push(url ? { t: 'img', url, key: m[1] } : { t: 'text', v: m[0] });
+        last = m.index + m[0].length;
+      }
+      if (last < text.length) parts.push({ t: 'text', v: text.slice(last) });
+      return parts.map((p) => p.t === 'img'
+        ? `<img src="${escHtml(p.url)}" alt="${escHtml(p.key)}" style="height:1.3em;vertical-align:middle;">`
+        : escHtml(p.v)).join('');
+    }
+    function appendChatMessage(item) {
+      let prof = {};
+      try { prof = JSON.parse(item.profile || '{}'); } catch (_) {}
+      let extras = {};
+      try { extras = JSON.parse(item.extras || '{}'); } catch (_) {}
+      const nick = prof.nickname || (item.uid || '').slice(0, 8);
+      const role = prof.userRoleCode || '';
+      const roleColor = role === 'streamer' ? '#1AE192'
+        : role === 'streaming_channel_manager' || role === 'streaming_chat_manager' ? '#749FFE'
+        : (prof.streamingProperty?.nicknameColor?.colorCode ? '#' + prof.streamingProperty.nicknameColor.colorCode.replace(/^#/, '') : '#ccc');
+      const msg = item.msg || item.content || '';
+      const badges = [];
+      if (prof.badge?.imageUrl) badges.push(prof.badge.imageUrl);
+      for (const vb of (prof.viewerBadges || [])) if (vb?.badge?.imageUrl) badges.push(vb.badge.imageUrl);
+      const badgesHtml = badges.map((u) => `<img src="${escHtml(u)}" style="height:14px;vertical-align:middle;margin-right:2px;">`).join('');
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:3px 0;border-bottom:1px solid #1a1a1f;word-break:break-word;';
+      row.innerHTML = `${badgesHtml}<span style="color:${roleColor};font-weight:600;">${escHtml(nick)}</span> <span style="color:#888;">:</span> <span>${renderChatMsg(msg, extras.emojis)}</span>`;
+      const atBottom = chatMsgs.scrollHeight - chatMsgs.scrollTop - chatMsgs.clientHeight < 40;
+      chatMsgs.appendChild(row);
+      // 최대 500개 유지
+      while (chatMsgs.children.length > 500) chatMsgs.firstElementChild.remove();
+      if (atBottom) chatMsgs.scrollTop = chatMsgs.scrollHeight;
+    }
+    // 들어오는 채팅 메시지 구독 (이 cid 전용, 다른 cid는 무시)
+    const onIncoming = (e) => {
+      const d = e.data;
+      if (d?.source !== 'cc-chat-incoming' || d.cid !== cid) return;
+      appendChatMessage(d.item);
+    };
+    window.addEventListener('message', onIncoming);
+
+    function syncChatBtnVisual() {
+      chatBtn.style.background = chatVisible ? '#1AE192' : 'transparent';
+      chatBtn.style.color = chatVisible ? '#111' : '#ccc';
+    }
+    async function saveChatVisible() {
+      try {
+        const obj = await chrome.storage.local.get('cc_cp2_chat_open');
+        const all = obj.cc_cp2_chat_open && typeof obj.cc_cp2_chat_open === 'object' ? obj.cc_cp2_chat_open : {};
+        all[cid] = chatVisible;
+        await chrome.storage.local.set({ cc_cp2_chat_open: all });
+      } catch (_) {}
+    }
+    chatBtn.addEventListener('click', () => {
+      chatVisible = !chatVisible;
+      applyChatLayout();
+      syncChatBtnVisual();
+      saveChatVisible();
+      if (chatVisible) {
+        if (chatLayout === 'right') {
+          const cur = overlay.getBoundingClientRect().width;
+          if (cur < 700) overlay.style.width = '820px';
+        }
+        chatMsgs.scrollTop = chatMsgs.scrollHeight;
       }
     });
+    syncChatBtnVisual();
+
+    // 정리: 오버레이 닫을 때 리스너 제거
+    const _origClose = overlay.querySelector('.cc-cp2-close');
+    _origClose.addEventListener('click', () => { window.removeEventListener('message', onIncoming); });
     playBtn.addEventListener('click', () => {
       const src = getVideo();
       if (mirror.paused) {
@@ -336,7 +521,7 @@
   window.__ccAddPanel = openSecondaryPanel;
   window.__ccPickPanel = openChannelPicker;
 
-  function enableOverlayDrag(overlay, handle) {
+  function enableOverlayDrag(overlay, handle, onEnd) {
     handle.addEventListener('mousedown', (e) => {
       if (e.target.tagName === 'BUTTON') return;
       const rect = overlay.getBoundingClientRect();
@@ -349,7 +534,11 @@
         overlay.style.bottom = 'auto';
         overlay.style.transform = 'none';
       };
-      const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+      const up = () => {
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+        try { onEnd?.(); } catch (_) {}
+      };
       window.addEventListener('mousemove', move);
       window.addEventListener('mouseup', up);
       e.preventDefault();
@@ -401,27 +590,29 @@
 
   function ensureUi() {
     const cid = liveCid();
-    if (!cid) {
-      document.getElementById('cc-live-rec-wrap')?.remove();
-      return;
-    }
     const header = document.querySelector('#cc-followings-panel .cc-fp-header');
     if (!header) return;
-    if (header.querySelector('#cc-live-rec-wrap')) return;
-    const wrap = document.createElement('span');
-    wrap.id = 'cc-live-rec-wrap';
-    wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;';
-    wrap.innerHTML = `
-      <button id="cc-multi-btn" type="button" class="cc-icon-btn" title="다른 채널 라이브 추가 시청" style="font-size:13px;">📺</button>
-      <button id="cc-chat-btn" type="button" class="cc-icon-btn" title="현재 채널에 채팅 빠른 전송" style="font-size:13px;">💬</button>
-    `;
-    const row2 = header.querySelector('.cc-fp-row2');
-    const refreshBtn = header.querySelector('.cc-fp-refresh');
-    if (row2) row2.appendChild(wrap);
-    else if (refreshBtn) refreshBtn.parentElement.insertBefore(wrap, refreshBtn);
-    else header.appendChild(wrap);
-    wrap.querySelector('#cc-multi-btn').addEventListener('click', openChannelPicker);
-    wrap.querySelector('#cc-chat-btn').addEventListener('click', openQuickChatBar);
+    // 다중시청(📺)은 어느 페이지에서나 노출, 빠른 채팅(💬)은 /live/{cid}에서만
+    let wrap = header.querySelector('#cc-live-rec-wrap');
+    if (!wrap) {
+      wrap = document.createElement('span');
+      wrap.id = 'cc-live-rec-wrap';
+      wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;';
+      wrap.innerHTML = `
+        <button id="cc-multi-btn" type="button" class="cc-icon-btn" title="다른 채널 라이브 추가 시청" style="font-size:13px;">📺</button>
+        <button id="cc-chat-btn" type="button" class="cc-icon-btn" title="현재 채널에 채팅 빠른 전송" style="font-size:13px;">💬</button>
+      `;
+      const row2 = header.querySelector('.cc-fp-row2');
+      const refreshBtn = header.querySelector('.cc-fp-refresh');
+      if (row2) row2.appendChild(wrap);
+      else if (refreshBtn) refreshBtn.parentElement.insertBefore(wrap, refreshBtn);
+      else header.appendChild(wrap);
+      wrap.querySelector('#cc-multi-btn').addEventListener('click', openChannelPicker);
+      wrap.querySelector('#cc-chat-btn').addEventListener('click', openQuickChatBar);
+    }
+    // 💬는 /live/{cid}에서만
+    const chatBtn = wrap.querySelector('#cc-chat-btn');
+    if (chatBtn) chatBtn.style.display = cid ? '' : 'none';
   }
 
   // 현재 채널에 채팅 빠르게 보내기 UI (작은 floating bar)
@@ -561,5 +752,7 @@
     ensureUi();
   }, 2000);
   ensureUi();
+  // 페이지 로드/이동 시 저장된 다중시청 패널들 복원
+  setTimeout(restoreActiveMulti, 800);
 
 })();
