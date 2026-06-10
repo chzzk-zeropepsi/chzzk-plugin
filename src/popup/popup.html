@@ -69,6 +69,24 @@
       클립 다운로드 버튼
     </label>
   </div>
+  <div style="margin-bottom:10px;padding:6px 8px;background:#25252b;border-radius:4px;">
+    <div style="font-size:11px;color:#aaa;margin-bottom:6px;">채팅 기록 (매니저용 검색)</div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
+      <input type="checkbox" id="chatLogToggle" style="width:auto;">
+      채팅 자동 기록
+    </label>
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;">
+      <span style="color:#888;">보존 기간</span>
+      <select id="chatRetention" style="background:#2a2a32;border:1px solid #444;color:#eee;border-radius:4px;padding:3px 6px;font-size:11px;">
+        <option value="1">1일</option>
+        <option value="3">3일</option>
+        <option value="7">7일</option>
+        <option value="14">14일</option>
+        <option value="30">30일</option>
+      </select>
+      <button id="chatClearAll" class="secondary" style="margin-left:auto;font-size:10px;">전체 기록 삭제</button>
+    </div>
+  </div>
   <div style="margin-bottom:10px;padding:6px 8px;background:#25252b;border-radius:4px;display:flex;align-items:center;gap:6px;">
     <span style="font-size:11px;color:#aaa;flex-shrink:0;">동기화</span>
     <span id="syncStatus" style="font-size:10px;color:#888;flex:1;text-align:right;"></span>

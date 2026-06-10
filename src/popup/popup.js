@@ -53,6 +53,31 @@ const $ = (id) => document.getElementById(id);
   });
 })();
 
+(async function initChatLogSettings() {
+  const toggle = document.getElementById('chatLogToggle');
+  const retention = document.getElementById('chatRetention');
+  const clearBtn = document.getElementById('chatClearAll');
+  const saved = await chrome.storage.local.get(['cc_chat_log_enabled', 'cc_chat_retention_days']);
+  toggle.checked = saved.cc_chat_log_enabled !== false; // 기본 ON
+  retention.value = String(saved.cc_chat_retention_days || 1);
+  toggle.addEventListener('change', () => {
+    chrome.storage.local.set({ cc_chat_log_enabled: toggle.checked });
+  });
+  retention.addEventListener('change', () => {
+    chrome.storage.local.set({ cc_chat_retention_days: parseInt(retention.value, 10) || 1 });
+  });
+  clearBtn.addEventListener('click', async () => {
+    if (!confirm('저장된 모든 채팅 기록을 삭제할까요?')) return;
+    const tabs = await chrome.tabs.query({ url: 'https://chzzk.naver.com/*' });
+    if (!tabs.length) { alert('치지직 탭을 먼저 열어주세요.'); return; }
+    try {
+      await chrome.tabs.sendMessage(tabs[0].id, { type: 'cc-chat-clear-all' });
+      clearBtn.textContent = '삭제 완료';
+      setTimeout(() => { clearBtn.textContent = '전체 기록 삭제'; }, 1500);
+    } catch (e) { alert('삭제 실패: ' + e.message); }
+  });
+})();
+
 document.querySelectorAll('.tab').forEach((t) => {
   t.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));

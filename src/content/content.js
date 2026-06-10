@@ -219,20 +219,78 @@ let chatDbPromise = null;
 function chatDB() {
   if (chatDbPromise) return chatDbPromise;
   chatDbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open('ccChatDB', 1);
-    req.onupgradeneeded = () => {
+    const req = indexedDB.open('ccChatDB', 2);
+    req.onupgradeneeded = (e) => {
       const db = req.result;
-      const store = db.createObjectStore('messages', { autoIncrement: true });
-      store.createIndex('cid_ts', ['cid', 'ts']);
+      let store;
+      if (e.oldVersion < 1) {
+        store = db.createObjectStore('messages', { autoIncrement: true });
+        store.createIndex('cid_ts', ['cid', 'ts']);
+      } else {
+        store = req.transaction.objectStore('messages');
+      }
+      if (!store.indexNames.contains('ts')) store.createIndex('ts', 'ts');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
   return chatDbPromise;
 }
+// 채팅 기록 설정 (popup에서 변경)
+let chatLogEnabled = true;
+let chatRetentionDays = 1;
+chrome.storage.local.get(['cc_chat_log_enabled', 'cc_chat_retention_days']).then((obj) => {
+  chatLogEnabled = obj.cc_chat_log_enabled !== false;
+  if (obj.cc_chat_retention_days) chatRetentionDays = obj.cc_chat_retention_days;
+}).catch(() => {});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if ('cc_chat_log_enabled' in changes) chatLogEnabled = changes.cc_chat_log_enabled.newValue !== false;
+  if ('cc_chat_retention_days' in changes) chatRetentionDays = changes.cc_chat_retention_days.newValue || 1;
+});
+// 보존기간 지난 채팅 자동 삭제 (세션당 1회)
+let chatPruned = false;
+async function pruneOldChats() {
+  if (chatPruned) return;
+  chatPruned = true;
+  try {
+    const db = await chatDB();
+    const cutoff = Date.now() - chatRetentionDays * 24 * 60 * 60 * 1000;
+    const tx = db.transaction('messages', 'readwrite');
+    const idx = tx.objectStore('messages').index('ts');
+    idx.openCursor(IDBKeyRange.upperBound(cutoff)).onsuccess = (e) => {
+      const cur = e.target.result;
+      if (!cur) return;
+      cur.delete();
+      cur.continue();
+    };
+  } catch (_) {}
+}
+async function dbClearAllChats() {
+  const db = await chatDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('messages', 'readwrite');
+    tx.objectStore('messages').clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
+  if (msg?.type === 'cc-chat-clear-all') {
+    dbClearAllChats().then(() => {
+      chatBufferByCid.clear();
+      chatSeenByCid.clear();
+      sendResponse({ ok: true });
+    }).catch((e) => sendResponse({ error: String(e?.message || e) }));
+    return true;
+  }
+  return false;
+});
 const dbWriteQueue = [];
 let dbWriteTimer = null;
 function queueDbChatWrite(entry) {
+  if (!chatLogEnabled) return;
+  pruneOldChats();
   dbWriteQueue.push(entry);
   if (dbWriteTimer) return;
   dbWriteTimer = setTimeout(async () => {
@@ -247,6 +305,7 @@ function queueDbChatWrite(entry) {
   }, 500);
 }
 async function dbGetChats(cid, limit = 5000) {
+  pruneOldChats();
   const db = await chatDB();
   return new Promise((resolve, reject) => {
     const out = [];
@@ -1113,9 +1172,24 @@ function bindChannelDnD(panel) {
   function isGroupDrag(dt) {
     try { return dt.types && [...dt.types].includes('text/cc-group'); } catch (_) { return false; }
   }
+  function firstGroupEl() {
+    return body.querySelector('.cc-group[data-drop]:not([data-gid="' + OTHER_KEY + '"])');
+  }
   body.addEventListener('dragover', (e) => {
     const groupEl = e.target.closest('.cc-group[data-drop]');
-    if (!groupEl) return;
+    if (!groupEl) {
+      // 그룹 드래그 중 첫 그룹 위의 빈 여백 → 맨 위로 이동 허용
+      if (isGroupDrag(e.dataTransfer)) {
+        const first = firstGroupEl();
+        if (first && e.clientY < first.getBoundingClientRect().top) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          clearDropIndicators();
+          first.classList.add('cc-drop-above');
+        }
+      }
+      return;
+    }
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     clearDropIndicators();
@@ -1123,8 +1197,8 @@ function bindChannelDnD(panel) {
       const head = groupEl.querySelector('.cc-group-head');
       const rect = head.getBoundingClientRect();
       const ratio = (e.clientY - rect.top) / rect.height;
-      if (ratio < 0.3) groupEl.classList.add('cc-drop-above');
-      else if (ratio > 0.7) groupEl.classList.add('cc-drop-below');
+      if (ratio < 0.4) groupEl.classList.add('cc-drop-above');
+      else if (ratio > 0.6) groupEl.classList.add('cc-drop-below');
       else groupEl.classList.add('cc-drop-target');
     } else {
       groupEl.classList.add('cc-drop-target');
@@ -1137,7 +1211,9 @@ function bindChannelDnD(panel) {
   body.addEventListener('drop', async (e) => {
     e.preventDefault();
     body.querySelectorAll('.cc-drop-target').forEach((el) => el.classList.remove('cc-drop-target'));
-    const groupEl = e.target.closest('.cc-group[data-drop]');
+    // 빈 여백에 드롭한 경우 dragover에서 마킹해둔 그룹(첫 그룹 위 등)을 대상으로 사용
+    const groupEl = e.target.closest('.cc-group[data-drop]')
+      || body.querySelector('.cc-group.cc-drop-above, .cc-group.cc-drop-below');
     const chData = e.dataTransfer.getData('text/cc-channel');
     const grpData = e.dataTransfer.getData('text/cc-group');
     if (chData) {
