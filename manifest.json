@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "치지직 플러그인",
-  "version": "1.0.6",
-  "description": "치지직 보조 도구: 팔로잉 그룹화, 생방송 알림, 다시보기 북마크, 클립 다운로드, 다중 채널 라이브 시청, 채팅 신고 도우미(키워드 하이라이트·누적)",
+  "version": "1.0.7",
+  "description": "치지직 보조 도구: 팔로잉 그룹화·생방송 알림·다시보기 북마크·클립 다운로드·다중 채널 시청·채팅 신고 도우미·팔로잉 hover 미리보기·다시보기 댓글 타임라인·채팅 글자크기/이모티콘 확대",
   "permissions": ["storage", "alarms", "tabs", "downloads"],
   "host_permissions": [
     "https://chzzk.naver.com/*",
@@ -42,8 +42,22 @@
     },
     {
       "matches": ["https://chzzk.naver.com/*"],
-      "js": ["src/content/content.js", "src/content/bookmarks.js", "src/content/clips.js", "src/content/live_record.js", "src/content/vertical.js"],
-      "css": ["src/content/content.css"],
+      "js": ["src/vendor/hls.min.js", "src/content/preview_main.js"],
+      "css": ["src/content/preview.css"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://chzzk.naver.com/*"],
+      "js": ["src/content/preview_bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://chzzk.naver.com/*"],
+      "js": ["src/content/content.js", "src/content/bookmarks.js", "src/content/clips.js", "src/content/live_record.js", "src/content/vertical.js", "src/content/vod_timeline.js", "src/content/chat_font.js"],
+      "css": ["src/content/content.css", "src/content/vod_timeline.css"],
       "run_at": "document_idle"
     }
   ],

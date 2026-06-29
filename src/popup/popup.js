@@ -37,7 +37,7 @@ const $ = (id) => document.getElementById(id);
 
 
 (async function initFeatureToggles() {
-  const keys = ['cc_feat_followings', 'cc_feat_vertical', 'cc_feat_bookmarks', 'cc_feat_downloads'];
+  const keys = ['cc_feat_followings', 'cc_feat_vertical', 'cc_feat_bookmarks', 'cc_feat_downloads', 'cc_feat_preview', 'cc_feat_vod_timeline', 'cc_feat_chat_font'];
   const noReloadKeys = new Set();
   const saved = await chrome.storage.local.get(keys);
   document.querySelectorAll('.feat-toggle').forEach((cb) => {
@@ -50,6 +50,53 @@ const $ = (id) => document.getElementById(id);
       const tabs = await chrome.tabs.query({ url: 'https://chzzk.naver.com/*' });
       tabs.forEach((t) => chrome.tabs.reload(t.id));
     });
+  });
+})();
+
+// 팔로잉 미리보기 세부 설정 (czpConfig) — 새로고침 없이 즉시 반영
+(async function initPreviewSettings() {
+  const DEFAULTS = { enabled: true, livePreview: true, width: 400, delay: 1, volume: 5 };
+  const live = $('czpLivePreview');
+  if (!live) return;
+  const saved = await chrome.storage.local.get({ czpConfig: DEFAULTS });
+  let config = { ...DEFAULTS, ...(saved.czpConfig || {}) };
+  const save = () => chrome.storage.local.set({ czpConfig: config });
+  const sliders = [
+    { id: 'czpWidth', key: 'width', unit: 'px', digits: 0 },
+    { id: 'czpDelay', key: 'delay', unit: 's', digits: 1 },
+    { id: 'czpVolume', key: 'volume', unit: '%', digits: 0 },
+  ];
+  live.checked = config.livePreview !== false;
+  live.addEventListener('change', () => { config.livePreview = live.checked; save(); });
+  for (const s of sliders) {
+    const el = $(s.id), out = $(`${s.id}_v`);
+    el.value = config[s.key];
+    const render = () => { out.textContent = `${Number(el.value).toFixed(s.digits)}${s.unit}`; };
+    render();
+    el.addEventListener('input', () => { config[s.key] = Number(el.value); render(); save(); });
+  }
+})();
+
+// 채팅 글자크기 · 이모티콘 확대 설정 — 새로고침 없이 즉시 반영
+(async function initChatFontSettings() {
+  const sizeEl = $('cfSize');
+  if (!sizeEl) return;
+  const saved = await chrome.storage.local.get(['chatFont', 'emoteHover', 'emoteSize']);
+  const sizeOut = $('cfSize_v'), hover = $('cfEmoteHover'), esize = $('cfEmoteSize'), esizeOut = $('cfEmoteSize_v');
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  sizeEl.value = typeof saved.chatFont === 'number' ? clamp(saved.chatFont, 10, 30) : 14;
+  sizeOut.textContent = `${sizeEl.value}px`;
+  sizeEl.addEventListener('input', () => {
+    sizeOut.textContent = `${sizeEl.value}px`;
+    chrome.storage.local.set({ chatFont: clamp(Number(sizeEl.value), 10, 30) });
+  });
+  hover.checked = saved.emoteHover !== false;
+  hover.addEventListener('change', () => chrome.storage.local.set({ emoteHover: hover.checked }));
+  esize.value = typeof saved.emoteSize === 'number' ? clamp(saved.emoteSize, 80, 300) : 130;
+  esizeOut.textContent = `${esize.value}px`;
+  esize.addEventListener('input', () => {
+    esizeOut.textContent = `${esize.value}px`;
+    chrome.storage.local.set({ emoteSize: clamp(Number(esize.value), 80, 300) });
   });
 })();
 

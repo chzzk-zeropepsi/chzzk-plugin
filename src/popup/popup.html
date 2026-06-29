@@ -68,7 +68,58 @@
       <input type="checkbox" class="feat-toggle" data-key="cc_feat_downloads" style="width:auto;">
       클립 다운로드 버튼
     </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
+      <input type="checkbox" class="feat-toggle" data-key="cc_feat_preview" style="width:auto;">
+      팔로잉 hover 미리보기
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
+      <input type="checkbox" class="feat-toggle" data-key="cc_feat_vod_timeline" style="width:auto;">
+      다시보기 댓글 타임라인
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
+      <input type="checkbox" class="feat-toggle" data-key="cc_feat_chat_font" style="width:auto;">
+      채팅 글자크기 · 이모티콘 확대
+    </label>
   </div>
+  <details style="margin-bottom:10px;background:#25252b;border-radius:4px;">
+    <summary style="cursor:pointer;padding:6px 8px;font-size:11px;color:#aaa;">⚙ 통합 기능 세부 설정</summary>
+    <div style="padding:4px 8px 8px;">
+      <div style="font-size:11px;color:#1AE192;margin:4px 0;">팔로잉 hover 미리보기</div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;cursor:pointer;">
+        <input type="checkbox" id="czpLivePreview" style="width:auto;"> 실시간 영상 재생
+      </label>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;">
+        <span style="color:#888;width:48px;">크기</span>
+        <input id="czpWidth" type="range" min="280" max="900" step="10" style="flex:1;">
+        <span id="czpWidth_v" style="color:#1AE192;width:46px;text-align:right;"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;">
+        <span style="color:#888;width:48px;">영상 지연</span>
+        <input id="czpDelay" type="range" min="0" max="3" step="0.1" style="flex:1;">
+        <span id="czpDelay_v" style="color:#1AE192;width:46px;text-align:right;"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;">
+        <span style="color:#888;width:48px;">볼륨</span>
+        <input id="czpVolume" type="range" min="0" max="100" step="1" style="flex:1;">
+        <span id="czpVolume_v" style="color:#1AE192;width:46px;text-align:right;"></span>
+      </div>
+      <div style="font-size:11px;color:#1AE192;margin:10px 0 4px;border-top:1px solid #333;padding-top:8px;">채팅 글자크기 · 이모티콘</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;">
+        <span style="color:#888;width:60px;">글자 크기</span>
+        <input id="cfSize" type="range" min="10" max="30" step="1" style="flex:1;">
+        <span id="cfSize_v" style="color:#1AE192;width:46px;text-align:right;"></span>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;cursor:pointer;">
+        <input type="checkbox" id="cfEmoteHover" style="width:auto;"> 이모티콘 hover 확대
+      </label>
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;">
+        <span style="color:#888;width:60px;">확대 크기</span>
+        <input id="cfEmoteSize" type="range" min="80" max="300" step="10" style="flex:1;">
+        <span id="cfEmoteSize_v" style="color:#1AE192;width:46px;text-align:right;"></span>
+      </div>
+      <div style="font-size:10px;color:#777;margin-top:6px;">채팅 단축키: Alt+] 키우기 · Alt+[ 줄이기 · Alt+\ 초기화</div>
+    </div>
+  </details>
   <div style="margin-bottom:10px;padding:6px 8px;background:#25252b;border-radius:4px;">
     <div style="font-size:11px;color:#aaa;margin-bottom:6px;">채팅 기록 (매니저용 검색)</div>
     <label style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;cursor:pointer;">
