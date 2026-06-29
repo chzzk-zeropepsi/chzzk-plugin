@@ -117,7 +117,22 @@ function resolveEmojiUrl(key, msgEmojis, catalog) {
   if (ent) return typeof ent === 'string' ? ent : (ent.imageUrl || ent.url);
   return catalog?.[key] || null;
 }
-function renderMsgHtml(msg, msgEmojis, catalog) {
+// 신고 키워드 정규식으로 텍스트 일부를 <mark>로 강조 (없으면 그냥 escape)
+function highlightText(text, kwRe) {
+  const s = String(text ?? '');
+  if (!kwRe) return escapeHtml(s);
+  kwRe.lastIndex = 0;
+  let out = '', last = 0, m;
+  while ((m = kwRe.exec(s)) !== null) {
+    if (m.index > last) out += escapeHtml(s.slice(last, m.index));
+    out += `<mark class="cc-kw-hl">${escapeHtml(m[0])}</mark>`;
+    last = m.index + m[0].length;
+    if (m.index === kwRe.lastIndex) kwRe.lastIndex++; // 0길이 매치 무한루프 방지
+  }
+  if (last < s.length) out += escapeHtml(s.slice(last));
+  return out;
+}
+function renderMsgHtml(msg, msgEmojis, catalog, kwRe) {
   const text = String(msg || '');
   const parts = [];
   const re = /\{:([^:}\s]+):\}/g;
@@ -131,7 +146,7 @@ function renderMsgHtml(msg, msgEmojis, catalog) {
   if (last < text.length) parts.push({ t: 'text', v: text.slice(last) });
   return parts.map((p) => p.t === 'img'
     ? `<img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.key)}" title="${escapeHtml(p.key)}" style="height:1.4em;vertical-align:middle;">`
-    : escapeHtml(p.v)
+    : highlightText(p.v, kwRe)
   ).join('');
 }
 const chatSeenByCid = new Map(); // cid -> Map<key, ts>
@@ -350,35 +365,147 @@ async function getChannelName(cid) {
   } catch (_) { return ''; }
 }
 let chatSearchEl = null;
+
+// ===== 신고 도우미: 키워드(특정 단어) 하이라이트 + 누적 =====
+let reportKeywords = []; // 원본 문자열 배열 (매칭은 대소문자 무시)
+chrome.storage.local.get('cc_report_keywords').then((o) => {
+  if (Array.isArray(o.cc_report_keywords)) reportKeywords = o.cc_report_keywords;
+  chatSearchEl?._onKeywordsChanged?.();
+}).catch(() => {});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !('cc_report_keywords' in changes)) return;
+  reportKeywords = Array.isArray(changes.cc_report_keywords.newValue) ? changes.cc_report_keywords.newValue : [];
+  chatSearchEl?._onKeywordsChanged?.();
+});
+async function saveReportKeywords() {
+  try { await chrome.storage.local.set({ cc_report_keywords: reportKeywords }); } catch (_) {}
+}
+function buildKeywordRegex(keywords) {
+  const pats = (keywords || [])
+    .map((k) => String(k).trim())
+    .filter(Boolean)
+    .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!pats.length) return null;
+  try { return new RegExp(`(${pats.join('|')})`, 'gi'); } catch (_) { return null; }
+}
+function msgMatchesKeywords(msg, kwRe) {
+  if (!kwRe) return false;
+  kwRe.lastIndex = 0;
+  return kwRe.test(String(msg || ''));
+}
+
+// 키워드와 무관하게 수동으로 추가한 신고대상 (cid -> Map(key -> entry))
+const reportFlagsByCid = new Map();
+function flagKey(m) { return `${m.ts}|${m.uid}|${m.msg}`; }
+chrome.storage.local.get('cc_report_flags').then((o) => {
+  const data = o.cc_report_flags;
+  if (data && typeof data === 'object') {
+    for (const [cid, obj] of Object.entries(data)) {
+      const mp = new Map();
+      for (const [k, v] of Object.entries(obj || {})) mp.set(k, v);
+      reportFlagsByCid.set(cid, mp);
+    }
+  }
+  chatSearchEl?._onFlagsChanged?.();
+}).catch(() => {});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !('cc_report_flags' in changes)) return;
+  reportFlagsByCid.clear();
+  const data = changes.cc_report_flags.newValue;
+  if (data && typeof data === 'object') {
+    for (const [cid, obj] of Object.entries(data)) {
+      const mp = new Map();
+      for (const [k, v] of Object.entries(obj || {})) mp.set(k, v);
+      reportFlagsByCid.set(cid, mp);
+    }
+  }
+  chatSearchEl?._onFlagsChanged?.();
+});
+async function saveReportFlags() {
+  const obj = {};
+  for (const [cid, mp] of reportFlagsByCid) {
+    if (!mp.size) continue;
+    obj[cid] = {};
+    for (const [k, v] of mp) obj[cid][k] = v;
+  }
+  try { await chrome.storage.local.set({ cc_report_flags: obj }); } catch (_) {}
+}
+function isManualFlagged(cid, m) {
+  return !!reportFlagsByCid.get(cid)?.has(flagKey(m));
+}
+async function addManualFlag(cid, m) {
+  if (!m) return;
+  let mp = reportFlagsByCid.get(cid);
+  if (!mp) { mp = new Map(); reportFlagsByCid.set(cid, mp); }
+  mp.set(flagKey(m), { ts: m.ts, uid: m.uid, nickname: m.nickname || '', role: m.role || '', msg: m.msg, emojis: m.emojis || null, manual: true });
+  await saveReportFlags();
+}
+async function removeManualFlag(cid, key) {
+  reportFlagsByCid.get(cid)?.delete(key);
+  await saveReportFlags();
+}
+
 function openChatSearchPanel(cid) {
   if (chatSearchEl) { chatSearchEl.remove(); chatSearchEl = null; }
   chatSearchEl = document.createElement('div');
   chatSearchEl.id = 'cc-chat-search';
-  chatSearchEl.style.cssText = 'position:fixed;top:80px;right:16px;width:380px;max-height:70vh;background:rgba(20,20,24,0.97);color:#eee;border:2px solid #749FFE;border-radius:10px;box-shadow:0 4px 20px rgba(116,159,254,0.3);z-index:2147483646;font:13px/1.4 -apple-system,sans-serif;display:flex;flex-direction:column;';
+  chatSearchEl.style.cssText = 'position:fixed;top:80px;right:16px;width:380px;max-height:78vh;background:rgba(20,20,24,0.97);color:#eee;border:2px solid #749FFE;border-radius:10px;box-shadow:0 4px 20px rgba(116,159,254,0.3);z-index:2147483646;font:13px/1.4 -apple-system,sans-serif;display:flex;flex-direction:column;';
   chatSearchEl.innerHTML = `
+    <style>
+      #cc-chat-search mark.cc-kw-hl { background:#ffd54a; color:#111; border-radius:2px; padding:0 1px; font-weight:700; }
+      #cc-chat-search .cc-tab { background:#2a2a32; border:1px solid #444; color:#ccc; border-radius:6px; padding:3px 10px; cursor:pointer; font-size:12px; }
+      #cc-chat-search .cc-tab.active { background:#749FFE; color:#111; border-color:#749FFE; font-weight:700; }
+      #cc-chat-search .cc-kwchip { display:inline-flex; align-items:center; gap:3px; background:#3a2a1a; border:1px solid #c9831f; color:#ffce7a; border-radius:10px; padding:1px 6px; font-size:11px; }
+      #cc-chat-search .cc-kwchip button { background:transparent; border:none; color:#ffce7a; cursor:pointer; font-size:12px; line-height:1; padding:0; }
+      #cc-chat-search .cc-row.flagged { background:rgba(255,213,74,0.10); border-left:3px solid #ffd54a; padding-left:6px; }
+      #cc-chat-search .cc-copybtn { background:#2a2a32; border:1px solid #444; color:#9ec1ff; border-radius:4px; padding:1px 6px; cursor:pointer; font-size:10px; }
+      #cc-chat-search .cc-uid { font-family:monospace; font-size:10px; color:#aaa; word-break:break-all; }
+    </style>
     <div style="display:flex;align-items:center;gap:6px;padding:10px 12px;background:#749FFE;color:#111;font-weight:700;">
-      <span>🔍 채팅 검색</span>
+      <span>🚩 채팅 검색·신고 도우미</span>
       <span style="margin-left:auto;opacity:.8;font-size:11px;" id="cc-chat-count">0건</span>
       <button id="cc-chat-close" style="background:transparent;border:none;color:#111;font-size:16px;cursor:pointer;">×</button>
     </div>
-    <div style="display:flex;gap:4px;padding:6px 10px 0;align-items:center;font-size:11px;">
-      <button id="cc-chat-clear" style="background:#2a2a32;border:1px solid #444;color:#e74c3c;border-radius:4px;padding:3px 8px;cursor:pointer;">🗑 이 채널 기록 삭제</button>
-      <span id="cc-chat-mode" style="margin-left:auto;color:#888;">로딩 중…</span>
+    <div style="display:flex;gap:6px;padding:8px 10px 0;align-items:center;">
+      <button class="cc-tab active" id="cc-tab-all" type="button">전체</button>
+      <button class="cc-tab" id="cc-tab-flagged" type="button">🚩 신고대상 0</button>
+      <span id="cc-chat-mode" style="margin-left:auto;color:#888;font-size:11px;">로딩 중…</span>
     </div>
-    <input id="cc-chat-q" type="text" placeholder="키워드 또는 닉네임…" style="margin:8px 10px;padding:6px 8px;background:#1a1a1f;border:1px solid #333;border-radius:4px;color:#eee;">
-    <div id="cc-chat-results" style="flex:1;overflow:auto;padding:0 10px 10px;"></div>
+    <details id="cc-kw-box" style="margin:8px 10px 0;border:1px solid #333;border-radius:6px;">
+      <summary style="cursor:pointer;padding:6px 8px;font-size:12px;color:#ffce7a;">⚙ 키워드 하이라이트 설정</summary>
+      <div style="padding:6px 8px;">
+        <div style="display:flex;gap:4px;">
+          <input id="cc-kw-input" type="text" placeholder="단어 입력 후 Enter (쉼표로 여러 개)" style="flex:1;padding:5px 7px;background:#1a1a1f;border:1px solid #333;border-radius:4px;color:#eee;font-size:12px;">
+          <button id="cc-kw-add" type="button" style="background:#749FFE;border:none;color:#111;border-radius:4px;padding:0 10px;cursor:pointer;font-weight:700;">추가</button>
+        </div>
+        <div id="cc-kw-chips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;"></div>
+      </div>
+    </details>
+    <input id="cc-chat-q" type="text" placeholder="키워드 또는 닉네임 검색…" style="margin:8px 10px;padding:6px 8px;background:#1a1a1f;border:1px solid #333;border-radius:4px;color:#eee;">
+    <div id="cc-chat-results" style="flex:1;overflow:auto;padding:0 10px 6px;"></div>
+    <div style="display:flex;gap:4px;padding:6px 10px;border-top:1px solid #2a2a2f;font-size:11px;">
+      <button id="cc-chat-clear" style="background:#2a2a32;border:1px solid #444;color:#e74c3c;border-radius:4px;padding:3px 8px;cursor:pointer;">🗑 이 채널 기록 삭제</button>
+    </div>
   `;
   document.body.appendChild(chatSearchEl);
   const input = chatSearchEl.querySelector('#cc-chat-q');
   const out = chatSearchEl.querySelector('#cc-chat-results');
   const cnt = chatSearchEl.querySelector('#cc-chat-count');
+  const tabAll = chatSearchEl.querySelector('#cc-tab-all');
+  const tabFlagged = chatSearchEl.querySelector('#cc-tab-flagged');
+  const kwInput = chatSearchEl.querySelector('#cc-kw-input');
+  const kwAdd = chatSearchEl.querySelector('#cc-kw-add');
+  const kwChips = chatSearchEl.querySelector('#cc-kw-chips');
+  let tab = 'all'; // 'all' | 'flagged'
+  let kwRe = buildKeywordRegex(reportKeywords);
+
   chatSearchEl.querySelector('#cc-chat-close').addEventListener('click', () => {
     chatSearchEl._cleanup?.();
     chatSearchEl.remove();
     chatSearchEl = null;
   });
   // 헤더 드래그로 이동
-  const header = chatSearchEl.firstElementChild;
+  const header = chatSearchEl.querySelector('div[style*="background:#749FFE"]');
   header.style.cursor = 'move';
   header.addEventListener('mousedown', (ev) => {
     if (ev.target.tagName === 'BUTTON') return;
@@ -406,6 +533,77 @@ function openChatSearchPanel(cid) {
     chatSeenByCid.set(cid, new Map());
     render();
   });
+
+  // 신고 키워드 칩 렌더 + 추가/삭제
+  const renderKwChips = () => {
+    kwChips.innerHTML = reportKeywords.length
+      ? reportKeywords.map((k, i) => `<span class="cc-kwchip">${escapeHtml(k)}<button data-kwdel="${i}" title="삭제">×</button></span>`).join('')
+      : '<span style="color:#888;font-size:11px;">키워드가 없습니다. 강조할 단어를 추가하세요.</span>';
+  };
+  const addKeywords = async (raw) => {
+    const parts = String(raw || '').split(',').map((s) => s.trim()).filter(Boolean);
+    let changed = false;
+    for (const p of parts) {
+      if (!reportKeywords.some((k) => k.toLowerCase() === p.toLowerCase())) { reportKeywords.push(p); changed = true; }
+    }
+    if (changed) { await saveReportKeywords(); kwRe = buildKeywordRegex(reportKeywords); renderKwChips(); render(); }
+  };
+  kwAdd.addEventListener('click', () => { addKeywords(kwInput.value); kwInput.value = ''; kwInput.focus(); });
+  kwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addKeywords(kwInput.value); kwInput.value = ''; } });
+  kwChips.addEventListener('click', async (e) => {
+    const del = e.target.closest('[data-kwdel]');
+    if (!del) return;
+    reportKeywords.splice(Number(del.dataset.kwdel), 1);
+    await saveReportKeywords();
+    kwRe = buildKeywordRegex(reportKeywords);
+    renderKwChips();
+    render();
+  });
+  // 다른 곳(다른 탭/팝업)에서 키워드가 바뀌면 동기화
+  chatSearchEl._onKeywordsChanged = () => { kwRe = buildKeywordRegex(reportKeywords); renderKwChips(); render(); };
+  // 다른 곳에서 수동 신고대상이 바뀌면 동기화
+  chatSearchEl._onFlagsChanged = () => { render(); };
+
+  // 렌더된 행의 key -> entry (수동 추가 시 원본 항목을 찾기 위함)
+  const keyToEntry = new Map();
+
+  // 탭 전환
+  const setTab = (t) => {
+    tab = t;
+    tabAll.classList.toggle('active', t === 'all');
+    tabFlagged.classList.toggle('active', t === 'flagged');
+    render();
+    out.scrollTop = out.scrollHeight;
+  };
+  tabAll.addEventListener('click', () => setTab('all'));
+  tabFlagged.addEventListener('click', () => setTab('flagged'));
+
+  // 행 버튼: 복사 / 신고추가 / 신고제거 (이벤트 위임)
+  out.addEventListener('click', async (e) => {
+    const copyBtn = e.target.closest('[data-copy]');
+    if (copyBtn) {
+      try {
+        await navigator.clipboard.writeText(copyBtn.dataset.copy);
+        const old = copyBtn.textContent;
+        copyBtn.textContent = '복사됨';
+        setTimeout(() => { copyBtn.textContent = old; }, 900);
+      } catch (_) {}
+      return;
+    }
+    const addBtn = e.target.closest('[data-flagadd]');
+    if (addBtn) {
+      const entry = keyToEntry.get(addBtn.dataset.flagadd);
+      if (entry) { await addManualFlag(cid, entry); render(); }
+      return;
+    }
+    const delBtn = e.target.closest('[data-flagdel]');
+    if (delBtn) {
+      await removeManualFlag(cid, delBtn.dataset.flagdel);
+      render();
+      return;
+    }
+  });
+
   // DB에서 과거 채팅 로드해서 메모리 버퍼에 머지 (중복은 dedupe Set이 흡수)
   const loadFromDb = async () => {
     try {
@@ -428,26 +626,65 @@ function openChatSearchPanel(cid) {
   loadFromDb();
   // 기본/구독/치트키 이모지 카탈로그 비동기 로드
   fetchEmojiCatalog(cid).then((map) => { if (map) render(); });
+
+  const rowHtml = (m) => {
+    const key = flagKey(m);
+    keyToEntry.set(key, m);
+    // 신고대상 = 수동 추가한 것만. 키워드는 본문 하이라이트 전용(아래 renderMsgHtml에서 처리).
+    const flagged = isManualFlagged(cid, m);
+    const t = new Date(m.ts);
+    const time = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+    const roleColor = m.role === 'streamer' ? '#1AE192' : m.role === 'streaming_channel_manager' || m.role === 'streaming_chat_manager' ? '#749FFE' : '#bbb';
+    const isMe = myUserIdHash && m.uid === myUserIdHash;
+    const label = m.nickname || (m.uid ? m.uid.slice(0, 8) : '익명');
+    // 신고 추가/제거 버튼 (수동 토글)
+    const actionBtn = flagged
+      ? `<button class="cc-copybtn" data-flagdel="${escapeHtml(key)}" title="신고대상에서 제거" style="color:#e74c3c;border-color:#a33;">✕ 신고제거</button>`
+      : `<button class="cc-copybtn" data-flagadd="${escapeHtml(key)}" title="신고대상에 추가">🚩 신고추가</button>`;
+    // 신고용 상세: 닉네임 / uid / 내용 / 시간 + 복사 버튼
+    const report = flagged ? `
+      <div style="margin-top:3px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+        <span class="cc-uid">uid: ${escapeHtml(m.uid || '')}</span>
+        <button class="cc-copybtn" data-copy="${escapeHtml(m.uid || '')}" title="uid 복사">uid 복사</button>
+        <button class="cc-copybtn" data-copy="${escapeHtml(m.nickname || '')}" title="닉네임 복사">닉 복사</button>
+        <button class="cc-copybtn" data-copy="[${time}] ${escapeHtml((m.nickname || '') + ' (' + (m.uid || '') + '): ' + (m.msg || ''))}" title="신고용 전체 복사">전체 복사</button>
+      </div>` : '';
+    return `<div class="cc-row${flagged ? ' flagged' : ''}" style="padding:4px 0;border-bottom:1px solid #2a2a2f;">
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#888;">
+        <span>${flagged ? '🚩 ' : ''}${time} · <span style="color:${roleColor};font-weight:600;">${escapeHtml(label)}</span>${isMe ? ' <span style="color:#888;">· 나</span>' : ''}</span>
+        <span style="margin-left:auto;flex:none;">${actionBtn}</span>
+      </div>
+      <div style="margin-top:2px;word-break:break-all;">${renderMsgHtml(m.msg, m.emojis, emojiCatalogByCid.get(cid)?.map, kwRe)}</div>
+      ${report}
+    </div>`;
+  };
+
+  // 신고대상 = 수동 추가한 것만 (키워드는 하이라이트 전용)
+  const buildFlaggedList = () => {
+    const mp = reportFlagsByCid.get(cid);
+    if (!mp) return [];
+    return [...mp.values()].sort((a, b) => a.ts - b.ts);
+  };
+
   const render = () => {
+    keyToEntry.clear();
     const q = input.value.trim().toLowerCase();
     const src = chatBufferByCid.get(cid) || [];
-    const filtered = q ? src.filter((m) => (m.msg || '').toLowerCase().includes(q) || (m.nickname || '').toLowerCase().includes(q)) : src;
-    cnt.textContent = `${filtered.length}건 / 누적 ${src.length}`;
-    const recent = filtered.slice(-200); // 위=과거, 아래=최신
+    const flaggedList = buildFlaggedList();
+    tabFlagged.textContent = `🚩 신고대상 ${flaggedList.length}`;
+    // 탭 필터 → 검색 필터
+    let base = tab === 'flagged' ? flaggedList : src;
+    const filtered = q ? base.filter((m) => (m.msg || '').toLowerCase().includes(q) || (m.nickname || '').toLowerCase().includes(q)) : base;
+    cnt.textContent = tab === 'flagged' ? `신고대상 ${filtered.length}건` : `${filtered.length}건 / 누적 ${src.length}`;
+    // 신고 탭은 모두 누적 표시(놓치지 않게), 전체 탭은 최근 200
+    const recent = tab === 'flagged' ? filtered.slice(-1000) : filtered.slice(-200);
     const wasAtBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 30;
-    out.innerHTML = recent.map((m) => {
-      const t = new Date(m.ts);
-      const time = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
-      const roleColor = m.role === 'streamer' ? '#1AE192' : m.role === 'streaming_channel_manager' || m.role === 'streaming_chat_manager' ? '#749FFE' : '#bbb';
-      const isMe = myUserIdHash && m.uid === myUserIdHash;
-      const label = m.nickname || m.uid.slice(0, 8);
-      return `<div style="padding:4px 0;border-bottom:1px solid #2a2a2f;">
-        <div style="font-size:11px;color:#888;">${time} · <span style="color:${roleColor};font-weight:600;">${escapeHtml(label)}</span>${isMe ? ' <span style="color:#888;">· 나</span>' : ''}</div>
-        <div style="margin-top:2px;word-break:break-all;">${renderMsgHtml(m.msg, m.emojis, emojiCatalogByCid.get(cid)?.map)}</div>
-      </div>`;
-    }).join('') || '<div style="color:#888;padding:8px 0;">결과 없음</div>';
+    out.innerHTML = recent.map((m) => rowHtml(m)).join('')
+      || `<div style="color:#888;padding:8px 0;">${tab === 'flagged' ? '신고 대상 채팅이 없습니다.' : '결과 없음'}</div>`;
     if (wasAtBottom) out.scrollTop = out.scrollHeight;
   };
+
+  renderKwChips();
   let timer = null;
   input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(render, 100); });
   // 실시간 채팅 들어오면 자동 갱신 (디바운스)
@@ -457,8 +694,8 @@ function openChatSearchPanel(cid) {
   out.scrollTop = out.scrollHeight; // 첫 렌더는 항상 최신 위치로
   input.focus();
 }
-// 디버깅: 권한 없어도 채팅 검색 버튼 노출. 콘솔에서 window.CC_FORCE_CHAT_BTN = false로 끄기 가능
-window.CC_FORCE_CHAT_BTN = true;
+// 채팅 검색·신고 도우미 버튼: 매니저가 아니어도 모든 시청자에게 노출
+// (채팅 캡처는 WebSocket 가로채기라 권한과 무관하게 동작)
 async function ensureChatSearchButton() {
   const cid = currentLiveCid();
   const row = document.querySelector('#cc-followings-panel .cc-fp-row1');
@@ -466,14 +703,12 @@ async function ensureChatSearchButton() {
   if (!cid || !row) { existing?.remove(); return; }
   if (existing && existing.dataset.cid === cid) return;
   existing?.remove();
-  const isManager = window.CC_FORCE_CHAT_BTN || await checkManagerRole(cid);
-  if (!isManager) return;
   const btn = document.createElement('button');
   btn.className = 'cc-fp-chat-search';
   btn.dataset.cid = cid;
   btn.type = 'button';
-  btn.textContent = '🔍';
-  btn.title = '이 방송 채팅 누적 검색 (매니저)';
+  btn.textContent = '🚩';
+  btn.title = '채팅 검색·신고 도우미 (키워드 하이라이트·누적)';
   btn.addEventListener('click', () => openChatSearchPanel(cid));
   // 📌 옆 (📌 → 🔍 → ↻ 순)
   const refreshBtn = row.querySelector('.cc-fp-refresh');
@@ -2561,7 +2796,8 @@ function syncFloatingBtn() {
 }
 
 function injectToolbarButton() {
-  const studio = document.querySelector('[class*="toolbar_studio_button"]');
+  // 개편 후 클래스명: _studio_button_xxxxx (CSS 모듈 해시). 부분 매칭으로 robust하게.
+  const studio = document.querySelector('[class*="studio_button"]');
   if (!studio) return;
   const studioBox = studio.parentElement;
   if (!studioBox || studioBox.parentElement.querySelector('#cc-toolbar-btn')) return;
@@ -2570,7 +2806,9 @@ function injectToolbarButton() {
   const btn = document.createElement('button');
   btn.id = 'cc-toolbar-btn';
   btn.type = 'button';
-  btn.className = studio.className;
+  // 스튜디오 버튼의 기본 스타일(_container/_primary/_outlined/_large)만 빌리고
+  // 스튜디오 전용 클래스(_studio_button_*)는 제외해 고유 스타일 간섭 방지
+  btn.className = studio.className.split(/\s+/).filter((c) => !/studio_button/.test(c)).join(' ');
   btn.title = '치지직 플러그인 패널 토글';
   const iconUrl = chrome.runtime.getURL('icons/icon48.png');
   btn.innerHTML = `<img src="${iconUrl}" width="20" height="20" style="vertical-align:middle;margin-right:6px;border-radius:4px;" alt="">플러그인`;

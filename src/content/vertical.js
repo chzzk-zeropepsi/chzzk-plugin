@@ -48,8 +48,21 @@
   function applyMode() {
     const active = verticalMode && LIVE_RE.test(location.pathname);
     document.documentElement.classList.toggle('cc-vertical-layout', active);
+    markWrapper();
     ensureHandle();
     syncSidebar(active);
+  }
+
+  // 레이아웃 래퍼(채팅 영역의 부모)에 마커 클래스를 부여한다.
+  // 치지직 개편으로 클래스명이 해시화되어, 안정적인 #aside-chatting을 기준으로 부모를 찾는다.
+  function markWrapper() {
+    const active = document.documentElement.classList.contains('cc-vertical-layout');
+    const aside = document.getElementById('aside-chatting');
+    const wrap = aside && aside.parentElement;
+    document.querySelectorAll('.cc-vl-wrapper').forEach((el) => {
+      if (el !== wrap) el.classList.remove('cc-vl-wrapper');
+    });
+    if (wrap) wrap.classList.toggle('cc-vl-wrapper', active);
   }
 
   let sidebarWasExpanded = null;
@@ -162,11 +175,17 @@
       || document.querySelector('.pzp-fullscreen-button, .pzp-pc__fullscreen-button');
     btn.style.display = (isHidden(bar) || isHidden(ref)) ? 'none' : '';
   }
+  // 플레이어가 React로 컨트롤바를 다시 그리며 버튼을 지울 수 있어 주기적으로 재주입
+  setInterval(() => {
+    injectButton();
+    mirrorVisibility();
+  }, 700);
   setInterval(mirrorVisibility, 500);
 
   const obs = new MutationObserver(() => {
     injectButton();
     ensureHandle();
+    markWrapper();
   });
   obs.observe(document.body, { childList: true, subtree: true });
   injectButton();

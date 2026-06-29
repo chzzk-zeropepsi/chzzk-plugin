@@ -394,29 +394,12 @@ a:hover > .cc-vod-dl-overlay { opacity: 1; }
 
 /* 세로 레이아웃 (라이브 페이지) */
 .cc-vert-btn.cc-on { color: #1AE192 !important; }
-html.cc-vertical-layout [class^="live_wrapper"] {
+html.cc-vertical-layout .cc-vl-wrapper {
   flex-direction: column !important;
   display: flex !important;
 }
 html.cc-vertical-layout {
   --cc-chat-height: 40vh;
-}
-html.cc-vertical-layout [class^="live_chatting_list_container"] {
-  margin-top: 0 !important;
-}
-html.cc-vertical-layout [class^="live_chatting_list_fixed"] {
-  top: 8px !important;
-  bottom: auto !important;
-  left: 50% !important;
-  right: auto !important;
-  transform: translateX(-50%) !important;
-  z-index: 100 !important;
-}
-html.cc-vertical-layout [class^="live_chatting_ranking_container"],
-html.cc-vertical-layout [class^="live_information_details"],
-html.cc-vertical-layout [class^="live_information_area"],
-html.cc-vertical-layout [class^="live_information_footer"] {
-  display: none !important;
 }
 html.cc-vertical-layout #aside-chatting {
   width: 100% !important;
@@ -427,15 +410,20 @@ html.cc-vertical-layout #aside-chatting {
   flex: 0 0 auto !important;
   position: relative !important;
 }
-html.cc-vertical-layout [class^="live_wrapper"] > *:not(#aside-chatting) {
-  flex: 1 1 auto !important;
+/* 채팅을 제외한 콘텐츠 영역: 남은 높이를 차지하고 내부 스크롤 */
+html.cc-vertical-layout .cc-vl-wrapper > *:not(#aside-chatting) {
+  flex: 1 1 0 !important;
   min-height: 0 !important;
   width: 100% !important;
   max-width: none !important;
+  overflow-y: auto !important;
 }
-html.cc-vertical-layout [class^="live_wrapper"] > *:not(#aside-chatting),
-html.cc-vertical-layout [class^="live_wrapper"] > *:not(#aside-chatting) * {
-  min-height: 0 !important;
+/* 플레이어 컨테이너에 명시적 높이 부여(영상 위, 채팅 아래). #live_player_layout은 안정적 id */
+html.cc-vertical-layout #live_player_layout {
+  height: calc(100vh - 60px - var(--cc-chat-height)) !important;
+  max-height: calc(100vh - 60px - var(--cc-chat-height)) !important;
+  min-height: 200px !important;
+  width: 100% !important;
 }
 html.cc-vertical-layout .cc-split-handle {
   position: fixed;
@@ -471,13 +459,12 @@ html.cc-vertical-layout.cc-resizing * {
   user-select: none !important;
   cursor: ns-resize !important;
 }
+html.cc-vertical-layout #live_player_layout .pzp,
 html.cc-vertical-layout .pzp-pc__video,
 html.cc-vertical-layout .pzp-pc {
   width: 100% !important;
   height: 100% !important;
   max-width: none !important;
-}
-html.cc-vertical-layout [class^="live_wrapper"] > *:not(#aside-chatting) * {
-  max-height: 100% !important;
+  max-height: none !important;
 }
 .cc-vert-btn svg { transform: rotate(90deg); display: inline-block; }

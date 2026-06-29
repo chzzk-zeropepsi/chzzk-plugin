@@ -190,7 +190,7 @@
           <iframe class="cc-cp2-iframe" src="https://chzzk.naver.com/live/${encodeURIComponent(cid)}" style="position:absolute;left:-99999px;top:0;width:640px;height:360px;border:none;pointer-events:none;" allow="autoplay; encrypted-media"></iframe>
         </div>
         <div class="cc-cp2-chat-wrap" style="display:none;flex-direction:column;width:340px;flex-shrink:0;border-left:1px solid #333;background:#0f0f12;min-height:0;resize:horizontal;overflow:hidden;min-width:240px;max-width:600px;">
-          <div class="cc-cp2-chat-msgs" style="flex:1;overflow-y:auto;padding:6px 8px;color:#eee;font-size:12px;line-height:1.4;"></div>
+          <div class="cc-cp2-chat-msgs" style="flex:1;min-height:0;overflow-y:auto;padding:6px 8px;color:#eee;font-size:12px;line-height:1.4;"></div>
         </div>
       </div>
       <div class="cc-cp2-ctrl" style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#1a1a1a;flex-shrink:0;border-top:1px solid #333;">
@@ -282,7 +282,7 @@
         chatWrap.style.borderTop = '1px solid #333';
         chatWrap.style.width = '100%';
         chatWrap.style.height = 'auto';
-        chatWrap.style.flex = '1 1 auto';
+        chatWrap.style.flex = '1 1 0';
         chatWrap.style.maxWidth = 'none';
         chatWrap.style.maxHeight = '';
         chatWrap.style.minWidth = '0';
