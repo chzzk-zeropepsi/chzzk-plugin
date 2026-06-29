@@ -16,7 +16,6 @@ const ALLOW = new Set([
   'notify_channels',    // 알림 받는 채널 ID 목록
   'favorite_channels',  // 즐겨찾기 채널 ID 목록
   'cc_view_mode',       // 기본 뷰 모드
-  'cc_vertical_mode',   // 세로 채팅 모드
 ]);
 
 function currentVersion() {

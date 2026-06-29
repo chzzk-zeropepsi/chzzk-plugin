@@ -37,7 +37,7 @@ const $ = (id) => document.getElementById(id);
 
 
 (async function initFeatureToggles() {
-  const keys = ['cc_feat_followings', 'cc_feat_vertical', 'cc_feat_bookmarks', 'cc_feat_downloads', 'cc_feat_preview', 'cc_feat_vod_timeline', 'cc_feat_chat_font'];
+  const keys = ['cc_feat_followings', 'cc_feat_bookmarks', 'cc_feat_downloads', 'cc_feat_preview', 'cc_feat_vod_timeline', 'cc_feat_chat_font'];
   const noReloadKeys = new Set();
   const saved = await chrome.storage.local.get(keys);
   document.querySelectorAll('.feat-toggle').forEach((cb) => {
